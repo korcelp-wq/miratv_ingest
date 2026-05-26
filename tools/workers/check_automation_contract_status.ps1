@@ -267,6 +267,13 @@ try {
             Recurring = $true
             RequiredSignals = @("epg_join_validation_status", "worker_heartbeat_status")
             RequiredKillSwitch = "ENABLE_EPG_JOIN_GATE"
+        },
+ 	@{
+            Name = "check_cache_stale_serving"
+            Path = "tools\workers\check_cache_stale_serving.ps1"
+            Recurring = $true
+            RequiredSignals = @("cache_served_from", "stale_ratio_by_screen", "worker_heartbeat_status")
+            RequiredKillSwitch = "ENABLE_ASYNC_CACHE_REFRESH"
         }
     )
 
