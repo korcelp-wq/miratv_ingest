@@ -8,7 +8,7 @@
 #   2. It heartbeats if recurring.
 #   3. It emits one named signal.
 #   4. That signal appears in dashboard mapping.
-#   5. It has rollback/kill switch.
+#   5. It has rollback / kill switch.
 #
 # Signals:
 #   - worker_heartbeat_status
@@ -18,7 +18,7 @@
 #   - ENABLE_WORKER_RUNTIME
 #
 # Usage:
-#   powershell -NoProfile -ExecutionPolicy Bypass -File "tools/workers/check_automation_contract_status.ps1" -Environment "dev"
+#   pwsh -NoProfile -ExecutionPolicy Bypass -File "tools/workers/check_automation_contract_status.ps1" -Environment "dev"
 
 [CmdletBinding()]
 param(
@@ -237,7 +237,14 @@ try {
             Name = "refresh_user_bouquet_availability"
             Path = "tools\workers\refresh_user_bouquet_availability.ps1"
             Recurring = $true
-            RequiredSignals = @("availability_refresh_status", "availability_refresh_lag_minutes")
+            RequiredSignals = @("availability_refresh_status", "availability_refresh_lag_minutes", "worker_heartbeat_status")
+            RequiredKillSwitch = "ENABLE_AVAILABILITY_REFRESH"
+        },
+        @{
+            Name = "refresh_user_item_availability"
+            Path = "tools\workers\refresh_user_item_availability.ps1"
+            Recurring = $true
+            RequiredSignals = @("availability_refresh_status", "availability_refresh_lag_minutes", "worker_heartbeat_status")
             RequiredKillSwitch = "ENABLE_AVAILABILITY_REFRESH"
         }
     )
