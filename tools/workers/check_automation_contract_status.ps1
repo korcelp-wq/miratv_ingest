@@ -253,6 +253,13 @@ try {
             Recurring = $true
             RequiredSignals = @("availability_refresh_status", "availability_refresh_lag_minutes", "worker_heartbeat_status")
             RequiredKillSwitch = "ENABLE_AVAILABILITY_REFRESH"
+        },
+        @{
+            Name = "check_epg_freshness"
+            Path = "tools\workers\check_epg_freshness.ps1"
+            Recurring = $true
+            RequiredSignals = @("epg_freshness_age_hours", "worker_heartbeat_status")
+            RequiredKillSwitch = "ENABLE_EPG_IMPORT"
         }
     )
 
