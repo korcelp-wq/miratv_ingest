@@ -1,32 +1,37 @@
 # MiraTV Cache Stale-Serving Check Worker
 # File: tools/workers/check_cache_stale_serving.ps1
 # Purpose:
-#   P0.4 stale-serving contract / cache health scaffold.
-#   Establishes observable checks for cache serving source, stale ratio, and screen-level cache safety.
+#   P0.4 cache stale-serving gate scaffold + read-only DB-backed mode.
+#   Establishes observable cache health checks without mutating cache tables.
 #
 # Current implementation:
-#   - Local-first, no DB writes yet.
-#   - Supports DryRun and SnapshotInput modes.
-#   - Emits cache health and worker heartbeat signals.
-#   - Does not mutate cache tables or endpoints.
-#   - Designed to be extended with DB/query bridge and endpoint aggregation later.
+#   - Supports DryRun, SnapshotInput, and DbQuery modes.
+#   - DbQuery mode uses tools/common/DbQuery.psm1, which calls dog_open_proc.php.
+#   - DbQuery mode discovers cache-like tables and their actual timestamp/status columns before querying them.
+#   - Does not mutate cache tables.
+#
+# Why this version exists:
+#   Some cache/materialized tables do not share the same timestamp column names.
+#   The previous DB mode assumed updated_at existed everywhere and could trigger a bridge-side HTTP 500.
+#   This version uses information_schema first, then queries only columns that actually exist.
 #
 # Signals:
-#   - cache_served_from
-#   - stale_ratio_by_screen
+#   - cache_stale_serving_status
+#   - cache_stale_ratio
 #   - worker_heartbeat_status
 #
 # Kill switch:
 #   - ENABLE_ASYNC_CACHE_REFRESH
 #
+# Required for DbQuery mode:
+#   $env:DOG_OPEN_PROC_ENDPOINT = "https://miratv.club/_workers/api/series/dog_open_proc.php"
+#   $env:DOG_OPEN_PROC_TOKEN = "<token>"
+#
 # Usage:
 #   pwsh -NoProfile -ExecutionPolicy Bypass -File "tools/workers/check_cache_stale_serving.ps1" -Environment "dev"
 #
-# Optional snapshot input:
-#   pwsh -NoProfile -ExecutionPolicy Bypass -File "tools/workers/check_cache_stale_serving.ps1" `
-#     -Environment "dev" `
-#     -Mode "SnapshotInput" `
-#     -InputJsonPath "runtime/samples/cache_stale_serving_snapshot.json"
+# DbQuery:
+#   pwsh -NoProfile -ExecutionPolicy Bypass -File "tools/workers/check_cache_stale_serving.ps1" -Environment "dev" -Mode "DbQuery"
 
 [CmdletBinding()]
 param(
@@ -35,14 +40,20 @@ param(
     [string]$Environment = "prod",
     [string]$KillSwitchName = "ENABLE_ASYNC_CACHE_REFRESH",
 
-    [ValidateSet("DryRun", "SnapshotInput")]
+    [ValidateSet("DryRun", "SnapshotInput", "DbQuery")]
     [string]$Mode = "DryRun",
 
     [string]$InputJsonPath = "",
-    [string]$ScreenType = "",
-    [decimal]$MaxStaleRatio = 0.25,
-    [int]$HeartbeatIntervalSeconds = 300,
-    [int]$StaleAfterSeconds = 900,
+    [string]$DatabaseKey = "content",
+    [string]$DbQueryEndpoint = "",
+    [string]$DbQueryToken = "",
+    [int]$QueryTimeoutSec = 30,
+
+    [int]$FreshWindowMinutes = 30,
+    [int]$ServeableStaleWindowMinutes = 1440,
+    [decimal]$MaxStaleRatio = 0.80,
+    [int]$HeartbeatIntervalSeconds = 1800,
+    [int]$StaleAfterSeconds = 7200,
     [string]$LogRoot = ""
 )
 
@@ -114,7 +125,7 @@ function Read-CacheSnapshot {
     return $raw | ConvertFrom-Json -ErrorAction Stop
 }
 
-function Convert-ToArray {
+function Convert-ToArraySafe {
     [CmdletBinding()]
     param(
         [AllowNull()]
@@ -198,7 +209,33 @@ function Convert-ToDecimalSafe {
     return $DefaultValue
 }
 
-function Get-CacheRows {
+function Convert-ToDateTimeSafe {
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [object]$Value
+    )
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    $text = ([string]$Value).Trim()
+
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return $null
+    }
+
+    $parsed = [datetime]::MinValue
+
+    if ([datetime]::TryParse($text, [ref]$parsed)) {
+        return $parsed
+    }
+
+    return $null
+}
+
+function Get-SnapshotMetricRow {
     [CmdletBinding()]
     param(
         [AllowNull()]
@@ -206,192 +243,503 @@ function Get-CacheRows {
     )
 
     if ($null -eq $Snapshot) {
-        return @()
+        return $null
     }
 
-    if ($Snapshot.PSObject.Properties.Name -contains "screens") {
-        return Convert-ToArray -Value $Snapshot.screens
+    if ($Snapshot.PSObject.Properties.Name -contains "metrics") {
+        $rows = Convert-ToArraySafe -Value $Snapshot.metrics
+        if ($rows.Count -gt 0) {
+            return $rows[0]
+        }
     }
 
-    if ($Snapshot.PSObject.Properties.Name -contains "items") {
-        return Convert-ToArray -Value $Snapshot.items
+    if ($Snapshot.PSObject.Properties.Name -contains "rows") {
+        $rows = Convert-ToArraySafe -Value $Snapshot.rows
+        if ($rows.Count -gt 0) {
+            return $rows[0]
+        }
     }
 
-    if ($Snapshot.PSObject.Properties.Name -contains "cache_rows") {
-        return Convert-ToArray -Value $Snapshot.cache_rows
+    if ($Snapshot.PSObject.Properties.Name -contains "result") {
+        $rows = Convert-ToArraySafe -Value $Snapshot.result
+        if ($rows.Count -gt 0) {
+            return $rows[0]
+        }
     }
 
-    if ($Snapshot.PSObject.Properties.Name -contains "results") {
-        return Convert-ToArray -Value $Snapshot.results
+    if ($Snapshot.PSObject.Properties.Name -contains "caches") {
+        $rows = Convert-ToArraySafe -Value $Snapshot.caches
+        if ($rows.Count -gt 0) {
+            return $rows[0]
+        }
     }
 
-    return Convert-ToArray -Value $Snapshot
+    return $Snapshot
 }
 
-function Get-CacheMetrics {
+function Escape-SqlIdentifier {
     [CmdletBinding()]
     param(
-        [AllowNull()]
-        [object]$Snapshot,
-
-        [string]$ScreenType,
-
-        [decimal]$MaxStaleRatio
+        [Parameter(Mandatory = $true)]
+        [string]$Name
     )
 
-    $rows = Get-CacheRows -Snapshot $Snapshot
-
-    if (-not [string]::IsNullOrWhiteSpace($ScreenType)) {
-        $rows = @(
-            $rows | Where-Object {
-                $screenRaw = Get-PropertyValue -Object $_ -Names @("screen_type", "screen", "page")
-                ([string]$screenRaw).Trim().ToLowerInvariant() -eq $ScreenType.Trim().ToLowerInvariant()
-            }
-        )
+    if ($Name -notmatch "^[A-Za-z0-9_]+$") {
+        throw "Unsafe SQL identifier: $Name"
     }
 
-    $totalRows = @($rows).Count
-    $freshRows = 0
+    return "``$Name``"
+}
+
+function Get-CacheDiscoverySql {
+    [CmdletBinding()]
+    param()
+
+    return @"
+SELECT
+    t.TABLE_NAME AS table_name,
+    c.COLUMN_NAME AS column_name
+FROM information_schema.TABLES t
+LEFT JOIN information_schema.COLUMNS c
+    ON c.TABLE_SCHEMA = t.TABLE_SCHEMA
+   AND c.TABLE_NAME = t.TABLE_NAME
+WHERE t.TABLE_SCHEMA = DATABASE()
+  AND (
+        t.TABLE_NAME LIKE '%cache%'
+     OR t.TABLE_NAME LIKE '%materialized%'
+     OR t.TABLE_NAME LIKE '%snapshot%'
+     OR t.TABLE_NAME LIKE '%metadata_ext%'
+  )
+ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION
+"@
+}
+
+function Get-CacheRowSql {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TableName,
+
+        [string]$TimestampColumn = "",
+
+        [string]$ActiveColumn = "",
+
+        [int]$FreshWindowMinutes = 30,
+
+        [int]$ServeableStaleWindowMinutes = 1440
+    )
+
+    $safeTable = Escape-SqlIdentifier -Name $TableName
+
+    $activeExpression = "COUNT(*)"
+    if (-not [string]::IsNullOrWhiteSpace($ActiveColumn)) {
+        $safeActive = Escape-SqlIdentifier -Name $ActiveColumn
+        $activeExpression = "SUM(CASE WHEN COALESCE($safeActive, 1) = 1 THEN 1 ELSE 0 END)"
+    }
+
+    if ([string]::IsNullOrWhiteSpace($TimestampColumn)) {
+        return @"
+SELECT
+    '$TableName' AS cache_table,
+    COUNT(*) AS total_rows,
+    $activeExpression AS active_rows,
+    0 AS stale_rows,
+    0 AS serveable_stale_rows,
+    0 AS expired_rows,
+    COUNT(*) AS missing_timestamp_rows,
+    NULL AS newest_cache_timestamp,
+    NULL AS oldest_cache_timestamp
+FROM $safeTable
+"@
+    }
+
+    $safeTimestamp = Escape-SqlIdentifier -Name $TimestampColumn
+
+    return @"
+SELECT
+    '$TableName' AS cache_table,
+    COUNT(*) AS total_rows,
+    $activeExpression AS active_rows,
+    SUM(
+        CASE
+            WHEN $safeTimestamp IS NULL THEN 1
+            WHEN $safeTimestamp < DATE_SUB(NOW(), INTERVAL $FreshWindowMinutes MINUTE) THEN 1
+            ELSE 0
+        END
+    ) AS stale_rows,
+    SUM(
+        CASE
+            WHEN $safeTimestamp IS NOT NULL
+             AND $safeTimestamp < DATE_SUB(NOW(), INTERVAL $FreshWindowMinutes MINUTE)
+             AND $safeTimestamp >= DATE_SUB(NOW(), INTERVAL $ServeableStaleWindowMinutes MINUTE)
+            THEN 1
+            ELSE 0
+        END
+    ) AS serveable_stale_rows,
+    SUM(
+        CASE
+            WHEN $safeTimestamp IS NOT NULL
+             AND $safeTimestamp < DATE_SUB(NOW(), INTERVAL $ServeableStaleWindowMinutes MINUTE)
+            THEN 1
+            ELSE 0
+        END
+    ) AS expired_rows,
+    SUM(CASE WHEN $safeTimestamp IS NULL THEN 1 ELSE 0 END) AS missing_timestamp_rows,
+    MAX($safeTimestamp) AS newest_cache_timestamp,
+    MIN($safeTimestamp) AS oldest_cache_timestamp
+FROM $safeTable
+"@
+}
+
+function Get-PreferredTimestampColumn {
+    [CmdletBinding()]
+    param(
+        [string[]]$ColumnNames
+    )
+
+    $preferred = @(
+        "updated_at",
+        "last_updated_at",
+        "last_refresh_at",
+        "last_refreshed_at",
+        "refreshed_at",
+        "materialized_at",
+        "cached_at",
+        "last_seen_at",
+        "created_at"
+    )
+
+    foreach ($candidate in $preferred) {
+        if ($ColumnNames -contains $candidate) {
+            return $candidate
+        }
+    }
+
+    return ""
+}
+
+function Get-PreferredActiveColumn {
+    [CmdletBinding()]
+    param(
+        [string[]]$ColumnNames
+    )
+
+    $preferred = @(
+        "is_active",
+        "active",
+        "is_available",
+        "available"
+    )
+
+    foreach ($candidate in $preferred) {
+        if ($ColumnNames -contains $candidate) {
+            return $candidate
+        }
+    }
+
+    return ""
+}
+
+function Get-CacheMetricDbRow {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+
+        [string]$DatabaseKey = "content",
+
+        [string]$Endpoint = "",
+
+        [string]$Token = "",
+
+        [int]$TimeoutSec = 30,
+
+        [int]$FreshWindowMinutes = 30,
+
+        [int]$ServeableStaleWindowMinutes = 1440
+    )
+
+    $dbQueryModule = Join-Path $RepoRoot "tools\common\DbQuery.psm1"
+
+    if (-not (Test-Path -LiteralPath $dbQueryModule)) {
+        throw "DbQuery module not found at: $dbQueryModule"
+    }
+
+    Import-Module $dbQueryModule -Force
+
+    $discoveryResult = Invoke-ReadOnlyDbQuery `
+        -DatabaseKey $DatabaseKey `
+        -Sql (Get-CacheDiscoverySql) `
+        -Endpoint $Endpoint `
+        -Token $Token `
+        -TimeoutSec $TimeoutSec
+
+    $discoveryRows = Convert-ToArraySafe -Value $discoveryResult.rows
+    $tableMap = @{}
+
+    foreach ($row in $discoveryRows) {
+        $tableName = Get-PropertyValue -Object $row -Names @("table_name", "TABLE_NAME")
+        $columnName = Get-PropertyValue -Object $row -Names @("column_name", "COLUMN_NAME")
+
+        if ($null -eq $tableName -or [string]::IsNullOrWhiteSpace([string]$tableName)) {
+            continue
+        }
+
+        $tableNameText = ([string]$tableName).Trim()
+
+        if ($tableNameText -notmatch "^[A-Za-z0-9_]+$") {
+            continue
+        }
+
+        if (-not $tableMap.ContainsKey($tableNameText)) {
+            $tableMap[$tableNameText] = New-Object System.Collections.Generic.List[string]
+        }
+
+        if ($null -ne $columnName -and -not [string]::IsNullOrWhiteSpace([string]$columnName)) {
+            $columnNameText = ([string]$columnName).Trim()
+            if ($columnNameText -match "^[A-Za-z0-9_]+$") {
+                $tableMap[$tableNameText].Add($columnNameText) | Out-Null
+            }
+        }
+    }
+
+    $knownTables = @(
+        "home_ppv_event_schedule_cache",
+        "live_channel_version_pool",
+        "live_247_artwork_cache",
+        "vod_metadata_ext",
+        "series_metadata_ext"
+    )
+
+    $candidateTables = @()
+
+    foreach ($tableName in $knownTables) {
+        if ($tableMap.ContainsKey($tableName)) {
+            $candidateTables += $tableName
+        }
+    }
+
+    if ($candidateTables.Count -eq 0) {
+        return [pscustomobject]@{
+            cache_scope = "known_app_caches"
+            cache_table_count = 0
+            total_rows = 0
+            active_rows = 0
+            stale_rows = 0
+            serveable_stale_rows = 0
+            expired_rows = 0
+            missing_timestamp_rows = 0
+            refresh_needed_rows = 0
+            stale_ratio = 0
+            newest_cache_timestamp = $null
+            oldest_cache_timestamp = $null
+        }
+    }
+
+    $cacheTableCount = 0
+    $totalRows = 0
+    $activeRows = 0
     $staleRows = 0
-    $emptyRows = 0
-    $errorRows = 0
-    $unknownRows = 0
+    $serveableStaleRows = 0
+    $expiredRows = 0
+    $missingTimestampRows = 0
+    $refreshNeededRows = 0
+    $newestCacheTimestamp = $null
+    $oldestCacheTimestamp = $null
 
-    $servedFromCounts = @{}
-    $screenCounts = @{}
-    $screenStaleCounts = @{}
+    foreach ($tableName in $candidateTables) {
+        $columns = @($tableMap[$tableName].ToArray())
+        $timestampColumn = Get-PreferredTimestampColumn -ColumnNames $columns
+        $activeColumn = Get-PreferredActiveColumn -ColumnNames $columns
 
-    foreach ($row in $rows) {
-        $screenRaw = Get-PropertyValue -Object $row -Names @("screen_type", "screen", "page")
-        $screen = "unknown"
+        $sql = Get-CacheRowSql `
+            -TableName $tableName `
+            -TimestampColumn $timestampColumn `
+            -ActiveColumn $activeColumn `
+            -FreshWindowMinutes $FreshWindowMinutes `
+            -ServeableStaleWindowMinutes $ServeableStaleWindowMinutes
 
-        if ($null -ne $screenRaw -and -not [string]::IsNullOrWhiteSpace([string]$screenRaw)) {
-            $screen = ([string]$screenRaw).Trim().ToLowerInvariant()
+        $queryResult = Invoke-ReadOnlyDbQuery `
+            -DatabaseKey $DatabaseKey `
+            -Sql $sql `
+            -Endpoint $Endpoint `
+            -Token $Token `
+            -TimeoutSec $TimeoutSec
+
+        $rows = Convert-ToArraySafe -Value $queryResult.rows
+
+        if ($rows.Count -eq 0) {
+            continue
         }
 
-        if (-not $screenCounts.ContainsKey($screen)) {
-            $screenCounts[$screen] = 0
-            $screenStaleCounts[$screen] = 0
+        $row = $rows[0]
+        $cacheTableCount += 1
+        $rowTotal = Convert-ToIntSafe -Value (Get-PropertyValue -Object $row -Names @("total_rows"))
+        $rowActive = Convert-ToIntSafe -Value (Get-PropertyValue -Object $row -Names @("active_rows"))
+        $rowStale = Convert-ToIntSafe -Value (Get-PropertyValue -Object $row -Names @("stale_rows"))
+        $rowServeable = Convert-ToIntSafe -Value (Get-PropertyValue -Object $row -Names @("serveable_stale_rows"))
+        $rowExpired = Convert-ToIntSafe -Value (Get-PropertyValue -Object $row -Names @("expired_rows"))
+        $rowMissing = Convert-ToIntSafe -Value (Get-PropertyValue -Object $row -Names @("missing_timestamp_rows"))
+
+        $totalRows += $rowTotal
+        $activeRows += $rowActive
+        $staleRows += $rowStale
+        $serveableStaleRows += $rowServeable
+        $expiredRows += $rowExpired
+        $missingTimestampRows += $rowMissing
+
+        if ($rowStale -gt 0) {
+            $refreshNeededRows += 1
         }
 
-        $screenCounts[$screen] = [int]$screenCounts[$screen] + 1
+        $rowNewest = Convert-ToDateTimeSafe -Value (Get-PropertyValue -Object $row -Names @("newest_cache_timestamp"))
+        $rowOldest = Convert-ToDateTimeSafe -Value (Get-PropertyValue -Object $row -Names @("oldest_cache_timestamp"))
 
-        $servedFromRaw = Get-PropertyValue -Object $row -Names @("cache_served_from", "served_from", "source", "cache_status")
-        $servedFrom = "unknown"
-
-        if ($null -ne $servedFromRaw -and -not [string]::IsNullOrWhiteSpace([string]$servedFromRaw)) {
-            $servedFrom = ([string]$servedFromRaw).Trim().ToLowerInvariant()
-        }
-
-        if (-not $servedFromCounts.ContainsKey($servedFrom)) {
-            $servedFromCounts[$servedFrom] = 0
-        }
-
-        $servedFromCounts[$servedFrom] = [int]$servedFromCounts[$servedFrom] + 1
-
-        $statusRaw = Get-PropertyValue -Object $row -Names @("cache_status", "status", "state", "cache_state")
-        $status = ""
-
-        if ($null -ne $statusRaw) {
-            $status = ([string]$statusRaw).Trim().ToLowerInvariant()
-        }
-
-        if ($status -in @("fresh", "active", "cache_active", "cache_fresh", "ok", "valid")) {
-            $freshRows++
-        }
-        elseif ($status -in @("stale", "cache_stale", "stale_served", "cache_stale_refreshing", "expired")) {
-            $staleRows++
-            $screenStaleCounts[$screen] = [int]$screenStaleCounts[$screen] + 1
-        }
-        elseif ($status -in @("empty", "miss", "cache_miss", "none")) {
-            $emptyRows++
-        }
-        elseif ($status -in @("error", "failed", "exception")) {
-            $errorRows++
-        }
-        else {
-            if ($servedFrom -match "stale") {
-                $staleRows++
-                $screenStaleCounts[$screen] = [int]$screenStaleCounts[$screen] + 1
+        if ($null -ne $rowNewest) {
+            if ($null -eq $newestCacheTimestamp -or $rowNewest -gt $newestCacheTimestamp) {
+                $newestCacheTimestamp = $rowNewest
             }
-            elseif ($servedFrom -match "fresh|active|cache") {
-                $freshRows++
-            }
-            else {
-                $unknownRows++
+        }
+
+        if ($null -ne $rowOldest) {
+            if ($null -eq $oldestCacheTimestamp -or $rowOldest -lt $oldestCacheTimestamp) {
+                $oldestCacheTimestamp = $rowOldest
             }
         }
     }
 
     $staleRatio = [decimal]0
 
-    if ($totalRows -gt 0) {
-        $staleRatio = [decimal]::Round(([decimal]$staleRows / [decimal]$totalRows), 4)
+    if ($totalRows -gt 0 -and $staleRows -gt 0) {
+        $staleRatio = [decimal]::Round(([decimal]$staleRows / [decimal]$totalRows), 6)
     }
 
-    $dominantServedFrom = "dry_run"
-
-    if ($servedFromCounts.Count -gt 0) {
-        $dominantServedFrom = [string](
-            $servedFromCounts.GetEnumerator() |
-                Sort-Object -Property Value -Descending |
-                Select-Object -First 1
-        ).Name
+    return [pscustomobject]@{
+        cache_scope = "known_app_caches"
+        cache_table_count = $cacheTableCount
+        total_rows = $totalRows
+        active_rows = $activeRows
+        stale_rows = $staleRows
+        serveable_stale_rows = $serveableStaleRows
+        expired_rows = $expiredRows
+        missing_timestamp_rows = $missingTimestampRows
+        refresh_needed_rows = $refreshNeededRows
+        stale_ratio = $staleRatio
+        newest_cache_timestamp = $newestCacheTimestamp
+        oldest_cache_timestamp = $oldestCacheTimestamp
     }
+}
 
-    $screenRatios = @{}
+function Get-CacheMetrics {
+    [CmdletBinding()]
+    param(
+        [AllowNull()]
+        [object]$MetricRow,
 
-    foreach ($screenKey in $screenCounts.Keys) {
-        $count = [int]$screenCounts[$screenKey]
-        $staleCount = [int]$screenStaleCounts[$screenKey]
-        $ratio = [decimal]0
+        [string]$Mode,
 
-        if ($count -gt 0) {
-            $ratio = [decimal]::Round(([decimal]$staleCount / [decimal]$count), 4)
-        }
+        [decimal]$MaxStaleRatio,
 
-        $screenRatios[$screenKey] = $ratio
-    }
+        [string]$SourceName
+    )
 
     $status = "dry_run"
-    $note = "local-first scaffold; no DB query performed"
+    $cacheStaleServingStatus = "not_run"
+    $servedFrom = "dry_run"
+    $cacheScope = "known_app_caches"
+    $cacheTableCount = 0
+    $totalRows = 0
+    $activeRows = 0
+    $staleRows = 0
+    $serveableStaleRows = 0
+    $expiredRows = 0
+    $missingTimestampRows = 0
+    $refreshNeededRows = 0
+    $staleRatio = [decimal]0
+    $newestCacheTimestamp = $null
+    $oldestCacheTimestamp = $null
+    $validationNote = "local-first scaffold; no DB query performed"
 
-    if ($null -ne $Snapshot) {
-        $status = "ok"
-        $note = "cache stale-serving metrics within configured threshold"
-
-        if ($errorRows -gt 0) {
-            $status = "fail"
-            $note = "cache error rows detected"
+    if ($null -ne $MetricRow) {
+        $cacheScopeRaw = Get-PropertyValue -Object $MetricRow -Names @("cache_scope", "scope", "screen_type")
+        if ($null -ne $cacheScopeRaw -and -not [string]::IsNullOrWhiteSpace([string]$cacheScopeRaw)) {
+            $cacheScope = ([string]$cacheScopeRaw).Trim()
         }
-        elseif ($totalRows -eq 0) {
+
+        $cacheTableCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("cache_table_count", "table_count"))
+        $totalRows = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("total_rows", "row_count", "cache_row_count"))
+        $activeRows = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("active_rows", "fresh_rows"))
+        $staleRows = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("stale_rows", "stale_cache_rows"))
+        $serveableStaleRows = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("serveable_stale_rows", "stale_serveable_rows", "servable_stale_rows"))
+        $expiredRows = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("expired_rows", "expired_cache_rows"))
+        $missingTimestampRows = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("missing_timestamp_rows", "missing_cache_timestamp_rows"))
+        $refreshNeededRows = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("refresh_needed_rows", "refresh_needed_count"))
+        $staleRatio = Convert-ToDecimalSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("stale_ratio", "cache_stale_ratio"))
+
+        $newestCacheTimestamp = Convert-ToDateTimeSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("newest_cache_timestamp", "max_updated_at"))
+        $oldestCacheTimestamp = Convert-ToDateTimeSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("oldest_cache_timestamp", "min_updated_at"))
+
+        if ($totalRows -gt 0 -and $staleRatio -eq 0 -and $staleRows -gt 0) {
+            $staleRatio = [decimal]::Round(([decimal]$staleRows / [decimal]$totalRows), 6)
+        }
+
+        $status = "ok"
+        $cacheStaleServingStatus = "pass"
+        $servedFrom = "cache_active"
+        $validationNote = "cache rows are fresh or stale-serving is within configured bounds"
+
+        if ($cacheTableCount -le 0) {
             $status = "warning"
-            $note = "no cache rows found for evaluated scope"
+            $cacheStaleServingStatus = "warning"
+            $servedFrom = "no_cache_tables_found"
+            $validationNote = "no known app cache tables were found"
+        }
+        elseif ($totalRows -le 0) {
+            $status = "warning"
+            $cacheStaleServingStatus = "warning"
+            $servedFrom = "cache_empty"
+            $validationNote = "known app cache tables exist but have no cache rows"
+        }
+        elseif ($expiredRows -gt 0 -and $serveableStaleRows -le 0) {
+            $status = "warning"
+            $cacheStaleServingStatus = "warning"
+            $servedFrom = "cache_expired"
+            $validationNote = "expired cache rows exist without serveable stale fallback"
         }
         elseif ($staleRatio -gt $MaxStaleRatio) {
             $status = "warning"
-            $note = "stale ratio exceeds configured threshold"
+            $cacheStaleServingStatus = "warning"
+            $servedFrom = "cache_stale_refreshing"
+            $validationNote = "stale cache ratio exceeds configured threshold"
         }
-        elseif ($emptyRows -gt 0) {
-            $status = "warning"
-            $note = "empty/cache miss rows detected"
+        elseif ($staleRows -gt 0) {
+            $status = "ok"
+            $cacheStaleServingStatus = "pass"
+            $servedFrom = "cache_stale_refreshing"
+            $validationNote = "stale cache rows exist but remain within serveable threshold"
         }
     }
 
     return [ordered]@{
         status = $status
-        cache_served_from = $dominantServedFrom
+        cache_stale_serving_status = $cacheStaleServingStatus
+        served_from = $servedFrom
+        cache_scope = $cacheScope
+        cache_table_count = $cacheTableCount
+        total_rows = $totalRows
+        active_rows = $activeRows
+        stale_rows = $staleRows
+        serveable_stale_rows = $serveableStaleRows
+        expired_rows = $expiredRows
+        missing_timestamp_rows = $missingTimestampRows
+        refresh_needed_rows = $refreshNeededRows
         stale_ratio = $staleRatio
         max_stale_ratio = $MaxStaleRatio
-        total_rows = $totalRows
-        fresh_rows = $freshRows
-        stale_rows = $staleRows
-        empty_rows = $emptyRows
-        error_rows = $errorRows
-        unknown_rows = $unknownRows
-        screen_type = $ScreenType
-        screen_ratios = $screenRatios
-        validation_note = $note
+        newest_cache_timestamp = $newestCacheTimestamp
+        oldest_cache_timestamp = $oldestCacheTimestamp
+        source_name = $SourceName
+        mode = $Mode
+        validation_note = $validationNote
     }
 }
 
@@ -423,7 +771,7 @@ try {
             -Data @{
                 kill_switch_name = $KillSwitchName
                 kill_switch_enabled = $false
-                reason = "async cache refresh / stale-serving checks disabled by kill switch"
+                reason = "async cache refresh disabled by kill switch"
                 mode = $Mode
             } `
             -LogRoot $LogRoot | Out-Null
@@ -434,16 +782,16 @@ try {
             -WorkerName $WorkerName `
             -Component $Component `
             -Environment $Environment `
-            -SignalName "cache_served_from" `
+            -SignalName "cache_stale_serving_status" `
             -P0Item "P0.4" `
             -SignalValue "disabled" `
             -Status "disabled" `
-            -AllowedValues "cache_fresh|cache_stale|cache_stale_refreshing|origin|empty|disabled|dry_run" `
+            -AllowedValues "pass|warning|fail|not_run|disabled" `
             -SourceTableOrEndpoint "tools/workers/check_cache_stale_serving.ps1" `
             -Data @{
                 dashboard_panel = "Cache Health"
-                widget_key = "cache.served_from"
-                owner = "API Ops"
+                widget_key = "cache.stale_serving.status"
+                owner = "SRE"
                 kill_switch_name = $KillSwitchName
             } `
             -LogRoot $LogRoot | Out-Null
@@ -464,7 +812,9 @@ try {
         -Data @{
             kill_switch_name = $KillSwitchName
             mode = $Mode
-            screen_type = $ScreenType
+            database_key = $DatabaseKey
+            fresh_window_minutes = $FreshWindowMinutes
+            serveable_stale_window_minutes = $ServeableStaleWindowMinutes
             max_stale_ratio = $MaxStaleRatio
         } `
         -LogRoot $LogRoot | Out-Null
@@ -505,7 +855,8 @@ try {
         } `
         -LogRoot $LogRoot | Out-Null
 
-    $snapshot = $null
+    $metricRow = $null
+    $sourceName = "dry_run_no_db_query"
 
     if ($Mode -eq "SnapshotInput") {
         if ([string]::IsNullOrWhiteSpace($InputJsonPath)) {
@@ -514,12 +865,27 @@ try {
 
         $resolvedInput = Resolve-RepoRelativePath -RepoRoot $repoRoot -Path $InputJsonPath
         $snapshot = Read-CacheSnapshot -Path $resolvedInput
+        $metricRow = Get-SnapshotMetricRow -Snapshot $snapshot
+        $sourceName = "snapshot_input"
+    }
+    elseif ($Mode -eq "DbQuery") {
+        $metricRow = Get-CacheMetricDbRow `
+            -RepoRoot $repoRoot `
+            -DatabaseKey $DatabaseKey `
+            -Endpoint $DbQueryEndpoint `
+            -Token $DbQueryToken `
+            -TimeoutSec $QueryTimeoutSec `
+            -FreshWindowMinutes $FreshWindowMinutes `
+            -ServeableStaleWindowMinutes $ServeableStaleWindowMinutes
+
+        $sourceName = "dog_open_proc:content.known_app_caches"
     }
 
     $metrics = Get-CacheMetrics `
-        -Snapshot $snapshot `
-        -ScreenType $ScreenType `
-        -MaxStaleRatio $MaxStaleRatio
+        -MetricRow $metricRow `
+        -Mode $Mode `
+        -MaxStaleRatio $MaxStaleRatio `
+        -SourceName $sourceName
 
     Emit-Signal `
         -RunId $script:RunId `
@@ -527,27 +893,30 @@ try {
         -WorkerName $WorkerName `
         -Component $Component `
         -Environment $Environment `
-        -SignalName "cache_served_from" `
+        -SignalName "cache_stale_serving_status" `
         -P0Item "P0.4" `
-        -SignalValue ([string]$metrics.cache_served_from) `
+        -SignalValue ([string]$metrics.cache_stale_serving_status) `
         -Status ([string]$metrics.status) `
-        -AllowedValues "cache_fresh|cache_stale|cache_stale_refreshing|origin|empty|disabled|dry_run|unknown" `
+        -AllowedValues "pass|warning|fail|not_run|disabled" `
         -SourceTableOrEndpoint "tools/workers/check_cache_stale_serving.ps1" `
-        -ScreenType $ScreenType `
         -Data @{
             dashboard_panel = "Cache Health"
-            widget_key = "cache.served_from"
-            owner = "API Ops"
+            widget_key = "cache.stale_serving.status"
+            owner = "SRE"
             kill_switch_name = $KillSwitchName
             mode = $Mode
-            stale_ratio = $metrics.stale_ratio
-            max_stale_ratio = $metrics.max_stale_ratio
+            source_name = $metrics.source_name
+            cache_scope = $metrics.cache_scope
+            served_from = $metrics.served_from
+            cache_table_count = $metrics.cache_table_count
             total_rows = $metrics.total_rows
-            fresh_rows = $metrics.fresh_rows
+            active_rows = $metrics.active_rows
             stale_rows = $metrics.stale_rows
-            empty_rows = $metrics.empty_rows
-            error_rows = $metrics.error_rows
-            unknown_rows = $metrics.unknown_rows
+            serveable_stale_rows = $metrics.serveable_stale_rows
+            expired_rows = $metrics.expired_rows
+            missing_timestamp_rows = $metrics.missing_timestamp_rows
+            refresh_needed_rows = $metrics.refresh_needed_rows
+            stale_ratio = $metrics.stale_ratio
             validation_note = $metrics.validation_note
         } `
         -LogRoot $LogRoot | Out-Null
@@ -558,30 +927,25 @@ try {
         -WorkerName $WorkerName `
         -Component $Component `
         -Environment $Environment `
-        -SignalName "stale_ratio_by_screen" `
+        -SignalName "cache_stale_ratio" `
         -P0Item "P0.4" `
         -SignalValue ([string]$metrics.stale_ratio) `
         -ValueNum ([decimal]$metrics.stale_ratio) `
         -Status ([string]$metrics.status) `
         -AllowedValues "0..1" `
         -SourceTableOrEndpoint "tools/workers/check_cache_stale_serving.ps1" `
-        -ScreenType $ScreenType `
         -Data @{
             dashboard_panel = "Cache Health"
-            widget_key = "cache.stale_ratio.by_screen"
-            owner = "API Ops"
+            widget_key = "cache.stale_ratio"
+            owner = "SRE"
             kill_switch_name = $KillSwitchName
             mode = $Mode
-            cache_served_from = $metrics.cache_served_from
-            max_stale_ratio = $metrics.max_stale_ratio
-            total_rows = $metrics.total_rows
-            fresh_rows = $metrics.fresh_rows
+            source_name = $metrics.source_name
+            cache_scope = $metrics.cache_scope
             stale_rows = $metrics.stale_rows
-            empty_rows = $metrics.empty_rows
-            error_rows = $metrics.error_rows
-            unknown_rows = $metrics.unknown_rows
-            screen_ratios = $metrics.screen_ratios
-            validation_note = $metrics.validation_note
+            total_rows = $metrics.total_rows
+            max_stale_ratio = $metrics.max_stale_ratio
+            refresh_needed_rows = $metrics.refresh_needed_rows
         } `
         -LogRoot $LogRoot | Out-Null
 
@@ -593,7 +957,7 @@ try {
         -Environment $Environment `
         -Status "job_completed" `
         -EventType "job_completed" `
-        -SourceName "cache_stale_serving" `
+        -SourceName ([string]$metrics.source_name) `
         -SourceRowCount ([int]$metrics.total_rows) `
         -RowsInserted 0 `
         -RowsUpdated 0 `
@@ -601,23 +965,29 @@ try {
         -RowsFailed 0 `
         -DurationMs (Get-DurationMs -Start $script:StartedAt) `
         -Data @{
-            cache_served_from = $metrics.cache_served_from
+            cache_stale_serving_status = $metrics.cache_stale_serving_status
+            served_from = $metrics.served_from
+            cache_scope = $metrics.cache_scope
+            cache_table_count = $metrics.cache_table_count
+            total_rows = $metrics.total_rows
+            active_rows = $metrics.active_rows
+            stale_rows = $metrics.stale_rows
+            serveable_stale_rows = $metrics.serveable_stale_rows
+            expired_rows = $metrics.expired_rows
+            missing_timestamp_rows = $metrics.missing_timestamp_rows
+            refresh_needed_rows = $metrics.refresh_needed_rows
             stale_ratio = $metrics.stale_ratio
             max_stale_ratio = $metrics.max_stale_ratio
-            total_rows = $metrics.total_rows
-            fresh_rows = $metrics.fresh_rows
-            stale_rows = $metrics.stale_rows
-            empty_rows = $metrics.empty_rows
-            error_rows = $metrics.error_rows
-            unknown_rows = $metrics.unknown_rows
-            screen_type = $ScreenType
+            newest_cache_timestamp = $metrics.newest_cache_timestamp
+            oldest_cache_timestamp = $metrics.oldest_cache_timestamp
+            source_name = $metrics.source_name
             mode = $Mode
             validation_note = $metrics.validation_note
-            note = "local-first scaffold; no DB query performed"
+            note = "read-only cache stale-serving check; no DB writes performed"
         } `
         -LogRoot $LogRoot | Out-Null
 
-    Write-Output "OK: cache stale-serving check completed. status=$($metrics.status) served_from=$($metrics.cache_served_from) stale_ratio=$($metrics.stale_ratio) mode=$Mode run_id=$script:RunId"
+    Write-Output "OK: cache stale-serving check completed. status=$($metrics.status) result=$($metrics.cache_stale_serving_status) served_from=$($metrics.served_from) cache_scope=$($metrics.cache_scope) total_rows=$($metrics.total_rows) stale_ratio=$($metrics.stale_ratio) refresh_needed_rows=$($metrics.refresh_needed_rows) mode=$Mode run_id=$script:RunId"
     exit 0
 }
 catch {
@@ -639,12 +1009,12 @@ catch {
             -EventType "job_failed" `
             -SourceName "cache_stale_serving" `
             -DurationMs $duration `
-            -ErrorCode "CACHE_STALE_SERVING_CHECK_FAILED" `
+            -ErrorCode "CACHE_STALE_SERVING_FAILED" `
             -ErrorMessage $message `
             -Data @{
                 kill_switch_name = $KillSwitchName
                 mode = $Mode
-                screen_type = $ScreenType
+                database_key = $DatabaseKey
             } `
             -LogRoot $LogRoot | Out-Null
 
@@ -654,19 +1024,18 @@ catch {
             -WorkerName $WorkerName `
             -Component $Component `
             -Environment $Environment `
-            -SignalName "cache_served_from" `
+            -SignalName "cache_stale_serving_status" `
             -P0Item "P0.4" `
-            -SignalValue "failed" `
+            -SignalValue "fail" `
             -Status "failed" `
-            -AllowedValues "cache_fresh|cache_stale|cache_stale_refreshing|origin|empty|disabled|dry_run|unknown|failed" `
+            -AllowedValues "pass|warning|fail|not_run|disabled" `
             -SourceTableOrEndpoint "tools/workers/check_cache_stale_serving.ps1" `
-            -ScreenType $ScreenType `
-            -ErrorCode "CACHE_STALE_SERVING_CHECK_FAILED" `
+            -ErrorCode "CACHE_STALE_SERVING_FAILED" `
             -ErrorMessage $message `
             -Data @{
                 dashboard_panel = "Cache Health"
-                widget_key = "cache.served_from"
-                owner = "API Ops"
+                widget_key = "cache.stale_serving.status"
+                owner = "SRE"
                 kill_switch_name = $KillSwitchName
                 mode = $Mode
             } `
