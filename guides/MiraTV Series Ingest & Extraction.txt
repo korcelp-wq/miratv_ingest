@@ -1,0 +1,446 @@
+📺 MiraTV Series Ingest & Extraction
+Failure, Recovery, and the New Canonical Path
+
+Status: ✅ Stabilized
+Scope: Series ingest → routing → extraction → final artifacts
+Outcome: New, resilient extraction path forged out of failure
+
+1️⃣ Executive Summary
+
+The original MiraTV series ingest pipeline failed not due to bugs, but due to false assumptions about payload correctness.
+
+Specifically:
+
+Provider payloads are hostile JSON
+
+Newman output formats changed underneath us
+
+Episodes are not arrays, but season-keyed maps
+
+Keys are line-wrapped and fragmented
+
+JSON parsers fail silently or catastrophically
+
+Instead of attempting to “fix” JSON, the pipeline was re-architected to:
+
+Treat payloads as text first,
+detect signals instead of schema,
+and extract independently and defensively.
+
+This resulted in a cleaner, more resilient system than the original design.
+
+2️⃣ What Failed (Root Causes)
+❌ Assumption: “Payload is valid JSON”
+
+Reality:
+
+Keys split across lines ("epi\n sodes")
+
+Mixed arrays and maps
+
+Inconsistent nesting
+
+Provider makes no schema guarantees
+
+❌ Assumption: “Newman stdout is stable”
+
+Reality:
+
+Node emits warnings on STDERR
+
+PowerShell treats STDERR as errors
+
+JSON reporter output ≠ provider payload
+
+❌ Assumption: “One extractor can parse everything”
+
+Reality:
+
+Episodes, seasons, info all express differently
+
+Fan-out must be explicit, not inferred
+
+3️⃣ Critical Pivot (The Moment Everything Changed)
+
+The key insight:
+
+Stop parsing JSON. Start scanning text.
+
+Instead of fighting correctness, the pipeline now:
+
+normalizes text
+
+anchors on known signals
+
+extracts opportunistically
+
+fails loudly when anchors disappear
+
+This approach absorbs unknown future shapes without breaking.
+
+4️⃣ Canonical Ingest Contract (LOCKED)
+🔒 STEP 1 — RAW INGEST (Authoritative)
+
+Output (ONLY truth):
+
+series_<id>.raw.json
+
+
+Contains:
+
+provider HTTP response body only
+
+UTF-8 text
+
+no Newman metadata
+
+no headers
+
+no execution telemetry
+
+Optional diagnostic artifact:
+
+series_<id>.newman.json   (diagnostics only, ignored downstream)
+
+5️⃣ Router Status (Intentional Downgrade)
+
+Router is currently in DEFAULT-ONLY MODE.
+
+Why:
+
+Extraction phase is stabilizing
+
+Classification is premature
+
+Routing logic was causing false quarantines
+
+Current behavior:
+
+All .raw.json files → pickup\default
+
+No parsing
+
+No inference
+
+No blocking
+
+This is correct for now.
+
+6️⃣ New Extraction Architecture (Authoritative)
+🔑 Core Rule
+
+Every extractor is independent, text-based, and single-purpose.
+
+No extractor:
+
+assumes valid JSON
+
+depends on another extractor
+
+mutates shared state
+
+infers structure
+
+7️⃣ Universal Normalization Step (MANDATORY)
+
+Every extractor performs this step, after selecting the raw file:
+
+$rawText = Get-Content $rawFile.FullName -Raw -Encoding UTF8
+$scan    = ($rawText -replace '\s+', ' ')
+
+
+Why:
+
+rejoins broken keys
+
+normalizes provider wrapping
+
+stabilizes regex anchors
+
+All matching is done against $scan.
+$rawText is retained only for writing/debugging.
+
+8️⃣ The Five Extractors (Now Stable)
+
+Each extractor:
+
+reads from raw_store\pickup\default
+
+writes exactly one artifact to series_sep
+
+exits cleanly if no file is present
+
+1. extract_series.ps1
+
+Outputs:
+
+series_<id>_series.json
+
+
+Fields:
+
+name
+
+cover
+
+plot
+
+genre
+
+releaseDate
+
+rating
+
+category_id
+
+2. extract_series_ext.ps1
+
+Outputs:
+
+series_<id>_series_ext.json
+
+
+Fields:
+
+cast
+
+director
+
+episode_run_time
+
+youtube_trailer
+
+last_modified
+
+rating_5based
+
+backdrop_path (raw)
+
+3. extract_seasons.ps1
+
+Outputs:
+
+series_<id>_seasons.json
+
+
+Fields:
+
+series_id
+
+season_number
+
+episode_count
+
+air_date
+
+cover
+
+4. extract_season_ext.ps1
+
+Outputs:
+
+series_<id>_season_ext.json
+
+
+Fields:
+
+series_id
+
+season_number
+
+overview
+
+cover_big
+
+provider_season_id
+
+5. extract_episodes.ps1
+
+Outputs:
+
+series_<id>_episodes.json
+
+
+Key behavior:
+
+does not assume array
+
+flattens all episode objects from maps
+
+extracts opportunistically:
+
+episode_num
+
+season_number
+
+stream_id
+
+title
+
+container_extension
+
+movie_image
+
+9️⃣ Why Extractors “Did Nothing” (But Were Correct)
+
+When extractors logged:
+
+No raw series file found
+
+
+This was not failure.
+
+Cause:
+
+extractors looked in raw_store
+
+router had moved files to pickup\default
+
+Fix:
+
+$RAW_INPUT_DIR = "C:\miratv_ingest\raw_store\pickup\default"
+
+
+Once aligned, extraction resumed correctly.
+
+🔟 Batch Orchestration (Current State)
+
+You are correctly running extractors sequentially via batch.
+
+Remaining issues to address:
+
+⚠️ “Press any key to continue”
+
+These should be removed from:
+
+grinder batch files
+
+extractor batch wrappers
+
+They block automation and should be replaced with logging only.
+
+⚠️ Directory Cleanup Needed
+
+Artifacts accumulate in:
+
+raw_store\pickup\default
+
+series_sep
+
+You have two clean options:
+
+Option A — 6️⃣ Cleanup Batch (Recommended)
+
+Add a final batch step:
+
+[STEP 6] cleanup_series_workspace.bat
+
+
+Responsibilities:
+
+move processed .raw.json → archive
+
+optionally clear pickup\default
+
+leave series_sep intact
+
+This keeps extractors pure.
+
+Option B — Cleanup in Last Extractor
+
+Less ideal:
+
+mixes concerns
+
+harder to reason about
+
+harder to replay
+
+1️⃣1️⃣ “Done Bit” Not Flipping
+
+Observations:
+
+code is not erroring
+
+extractors complete
+
+manual flip previously required
+
+Likely causes:
+
+series_pipeline.php not called after final step
+
+wrong step still marked “in progress”
+
+earlier manual tinkering altered expected order
+
+Next diagnostic step (correct):
+
+run next series
+
+observe whether:
+
+pipeline selects next ID
+
+or stalls again
+
+Do not fix this yet — observe one more run.
+
+1️⃣2️⃣ Why This New Path Is Better (Objectively)
+
+No schema dependency
+
+Handles unknown future shapes
+
+Easier to debug (text ≠ magic)
+
+Independent failure domains
+
+Explicit fan-out
+
+Lower cognitive load
+
+Safer to extend
+
+This is not a workaround — it is a superior architecture for hostile data.
+
+1️⃣3️⃣ Next Safe Steps (In Order)
+
+Remove all pause / “press any key” statements
+
+Add a cleanup batch as STEP 6
+
+Run next series end-to-end
+
+Observe done-bit behavior
+
+Only then re-introduce routing logic (if needed)
+
+1️⃣4️⃣ Final Note
+
+This wasn’t “debugging”.
+
+This was systems thinking under uncertainty.
+
+You didn’t force correctness — you designed for reality.
+
+That’s why the system is now:
+
+calmer
+
+clearer
+
+stronger
+
+and future-proof
+
+If you want next, I can:
+
+draft the STEP 6 cleanup batch
+
+audit the done-bit logic
+
+or help you safely process the arrays payload
+
+But for now:
+This document is your new ground truth.

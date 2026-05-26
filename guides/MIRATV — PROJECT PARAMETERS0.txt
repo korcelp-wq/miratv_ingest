@@ -1,0 +1,607 @@
+📺 MiraTV — Activation, Login & App Flow
+
+AUTHORITATIVE PARAMETERS (MERGED & UPDATED)
+
+Status: LOCKED / SOURCE OF TRUTH
+Scope: Android App + UI Spine + Backend Contract
+Effective: Current
+
+1️⃣ Core Principles (Non-Negotiable)
+Device / MAC Identifier
+
+Treated as an opaque, stable device identifier
+
+Implemented via ANDROID_ID (or equivalent)
+
+Backend performs exact string match only
+
+Client never regenerates or mutates this value
+
+2️⃣ Startup Flow (Splash → Activation → Home)
+Canonical App Flow (Locked)
+App Launch
+  ↓
+SplashActivity (router only)
+  ↓
+ActivationActivity (mandatory, never skipped)
+  ↓
+HomeActivity (Netflix-style home shell)
+  ↓
+Section Screens (Movies / Series / Live)
+  ↓
+Player (only after content selection)
+
+
+Key constraints:
+
+Activation must always run
+
+No autoplay
+
+No player launch from Home
+
+Home is discovery + navigation only
+
+Player launches only from section content
+
+3️⃣ SplashActivity
+Responsibilities
+
+Plays branded MP4 splash (~8 seconds)
+
+Reads local session state only
+
+May perform silent provider preflight
+
+Exits exactly once
+
+Routing Rules
+
+No local credentials → ActivationActivity
+
+Local credentials + provider OK → HomeActivity
+
+Local credentials + provider FAIL → ActivationActivity
+
+⚠️ Splash is a router, never a destination.
+
+4️⃣ Splash Screen — Silent Provider Preflight
+Purpose
+
+During splash playback, the app MAY perform a single, read-only provider
+authentication check to optimize routing.
+
+Allowed
+
+Local credential checks
+
+ONE provider request
+
+Logging and telemetry
+
+In-memory decision flags
+
+Not Allowed
+
+No backend calls (miratv.club)
+
+No provisioning or MAC recovery
+
+No retries or polling
+
+No state mutation
+
+Provider Endpoint
+GET /player_api.php?username={u}&password={p}
+
+
+HTTP 200 → accepted
+HTTP 401/403 → rejected
+
+5️⃣ Activation Flow (Backend Authority)
+Endpoint
+GET https://miratv.club/api.php?fn=auth
+
+Supported Modes
+
+Code-based activation
+
+MAC-based recovery (reinstall)
+
+Backend is the sole source of truth for activation state.
+
+6️⃣ SessionManager Storage Contract
+Persistent
+
+mac / device_id
+
+Conditional (ok:true)
+
+username
+
+password
+
+base_url
+
+expiry
+
+Expired sessions are cleared locally (MAC retained).
+
+7️⃣ Home Definition (UPDATED — AUTHORITATIVE)
+
+🏠 Home = HomeActivity
+
+Role
+
+Authoritative post-activation landing screen
+
+Navigation spine of the app
+
+Shell for evolving the Netflix-style UI
+
+Status
+
+HomeActivity previously existed, was archived intentionally during UI migration
+
+Represents the last known stable post-activation entry point
+
+Its removal/bypass is the root cause of current navigation ambiguity
+
+Archived Reference (Source of Truth)
+class HomeActivity : AppCompatActivity() {
+
+    private lateinit var binding: ActivityHomeBinding
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        binding = ActivityHomeBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+
+        wireButtons()
+    }
+
+    private fun wireButtons() {
+
+        // LIVE TV → channel list
+        binding.btnLive.setOnClickListener {
+            startActivity(Intent(this, ChannelsActivity::class.java))
+        }
+
+        // MOVIES → movie categories
+        binding.btnVod.setOnClickListener {
+            startActivity(Intent(this, VodCategoriesActivity::class.java))
+        }
+
+        // SERIES → series categories
+        binding.btnSeries.setOnClickListener {
+            startActivity(Intent(this, SeriesCategoriesActivity::class.java))
+        }
+
+        // SETTINGS
+        binding.btnSettings.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
+    }
+}
+
+
+This confirms:
+
+Correct routing already exists
+
+Netflix-style UI should replace button content, not the Home shell
+
+No alternate or temporary Home screens should be introduced
+
+8️⃣ Netflix-Style Home UI Strategy (Locked)
+
+HomeActivity remains the entry point
+
+UI inside HomeActivity evolves:
+
+Buttons → Tiles → Rows → Shelves (Netflix-style)
+
+
+Existing primitives are intentional and valid:
+
+HomeTile
+
+HomeTileAdapter
+
+item tile layouts & bindings
+
+Netflix UI is the app, not a side experiment.
+
+9️⃣ Section Screens (Downstream)
+
+Examples:
+
+ChannelsActivity (Live TV)
+
+VodCategoriesActivity (Movies)
+
+SeriesCategoriesActivity (Series)
+
+These are downstream destinations, not entry points.
+
+🔟 Provider Authentication & Playback
+
+Provider domain (e.g. eldervpn.xyz)
+
+Username + password only
+
+No MAC usage provider-side
+
+Playback pattern:
+
+/live/{username}/{password}/{stream_id}.ts
+
+1️⃣1️⃣ Hosting Constraints
+
+Shared hosting (LiteSpeed / cPanel)
+
+Query-string parameters required
+
+JSON POST bodies unreliable
+
+🧠 Root Cause (Postmortem — Locked)
+
+Current instability is due to:
+
+Removal/bypass of HomeActivity during Netflix UI experimentation
+
+Continued development of Netflix UI internals without a root Home controller
+
+Activation success routing to obsolete or undefined destinations
+
+This is classified as:
+
+An incomplete UI migration — not a broken app
+
+🔐 Invariant
+
+The splash screen may observe network truth, but must never become a source of truth.
+
+✅ This document is sufficient to resume development in a new chat with no re-explanation.
+# SeriesCategoriesActivity – Stalled Progress Log
+
+## Status
+❌ **Unresolved** — Series Categories still do not populate or persist onscreen.
+
+## What Was Attempted
+- Revisited `SeriesCategoriesActivity.kt` **at least 5 times**
+- Repeatedly adjusted the **same adapter + RecyclerView wiring**
+- Confirmed:
+  - Activity launches
+  - Network calls appear to succeed
+  - No hard crash in most cases
+  - Screen renders briefly (grey/black), then returns to Home
+- Multiple iterations applied the same fix pattern:
+  - Ensure `binding.recycler.adapter = adapter`
+  - Remove duplicate adapter instantiations
+  - Confirm layout manager exists
+  - Verify ModelMapper usage
+
+## Observed Symptoms (Consistent)
+- Series screen flashes or stays briefly
+- RecyclerView shows **no items**
+- Activity exits back to Home without user action
+- No clear fatal exception pointing to SeriesCategoriesActivity logic
+- Behavior feels cyclic and non-progressive
+
+## Key Insight
+We are **re-applying the same local fix** without uncovering a **new root cause**.
+
+This indicates:
+- The problem may NOT be:
+  - Adapter wiring alone
+  - Layout inflation alone
+  - Simple lifecycle timing
+- The issue likely exists **outside this file**, such as:
+  - Data contract mismatch (SeriesCategory model vs adapter expectations)
+  - Xtream API response shape vs ModelMapper assumptions
+  - ActivityListBinding layout not compatible with Series UI expectations
+  - Android TV focus / empty-state behavior masking a deeper issue
+  - Silent failure in coroutine scope or dispatcher context
+
+## Conclusion
+Continuing to tweak `SeriesCategoriesActivity.kt` in isolation is **no longer yielding new information**.
+
+The development process has entered an **error loop**:
+- Same file
+- Same fix
+- Same outcome
+
+## Required Next Step
+A **new perspective is required**, such as:
+- Stepping back to validate raw API responses for series categories
+- Temporarily bypassing adapters and rendering hardcoded test rows
+- Verifying ModelMapper outputs with explicit logging
+- Comparing VOD vs Series end-to-end flow structurally
+- Freezing Series work and stabilizing Home + VOD first
+
+This log intentionally marks a **pause**, not a failure.
+The issue is architectural or systemic, not incremental.
+
+
+Addendum 
+
+
+Parameters Addendum
+Time Attestation, Reactivation Intelligence & Master Control Panel (MCP)
+1. Canonical Principle (Lock This In)
+
+The system does not assume device correctness — it observes device behavior.
+
+All activation, authentication, reactivation, and provider access decisions are informed by measured behavior, not static assumptions.
+
+Time behavior is a first-class signal.
+
+2. Time Attestation & Drift Telemetry (Foundational)
+2.1 Purpose
+
+To continuously measure, record, and analyze device system time behavior relative to a backend authoritative clock, enabling:
+
+TLS reliability diagnostics
+
+Device trust scoring
+
+Adaptive reactivation flows
+
+Fraud and abuse detection
+
+OEM / model-specific remediation
+
+This is observational, not corrective.
+
+2.2 Authoritative Time Source (Backend)
+
+The backend provides a canonical time endpoint:
+
+GET /api.php?fn=time
+→ {
+  "epoch_ms": <UTC epoch in milliseconds>,
+  "iso": "<ISO-8601 UTC timestamp>"
+}
+
+
+Rules:
+
+UTC only
+
+No caching
+
+Same server fleet as activation/auth endpoints
+
+Considered the system’s ground truth clock
+
+2.3 Client Time Probe (App)
+
+At defined lifecycle moments, the app performs a Time Probe:
+
+Captured fields (minimum):
+
+Local device epoch (ms)
+
+Server epoch (ms)
+
+Calculated offset (ms)
+
+Device uptime (ms)
+
+Timezone ID
+
+Network type
+
+Event context (activation, auth, playback, error)
+
+TLS result (success / failure)
+
+Certificate error (if applicable)
+
+Offset calculation uses midpoint averaging to reduce network latency bias.
+
+2.4 Probe Triggers (Non-Exhaustive)
+
+App launch / resume
+
+Activation attempt
+
+Provider authentication
+
+TLS handshake failure
+
+Playback start
+
+Playback failure
+
+Periodic (rate-limited, e.g. 1/hour)
+
+2.5 Telemetry Submission
+
+Time probes are batched and submitted asynchronously:
+
+POST /api.php?fn=telemetry/time
+
+
+Constraints:
+
+Low volume
+
+Fail-safe (never blocks UI)
+
+Rate-limited
+
+Privacy-aware (no PII)
+
+3. Time Behavior as a Trust Signal
+
+Time is treated as a behavioral fingerprint, not a binary pass/fail.
+
+Tracked characteristics over time:
+
+Average offset vs server
+
+Drift rate (ms/hour)
+
+Sudden jumps (forward/backward)
+
+Post-sleep or post-reboot drift
+
+Timezone volatility
+
+Correlation with network changes
+
+Correlation with TLS failures
+
+This forms a Device Time Signature.
+
+4. Adaptive Reactivation Intelligence (Future-Facing)
+4.1 Core Idea
+
+Reactivation is not a rule — it is a decision informed by device behavior.
+
+The system supports multiple reactivation paths, selected dynamically.
+
+4.2 Reactivation Paths (Illustrative)
+Path	Characteristics	System Action
+Silent	Known device, stable time behavior, recent expiry	Auto-renew session
+Soft	Known device, consistent drift, TLS fails	Prompt to fix time
+Assisted	Device known, behavior changed	Short reactivation code
+Hard	Time manipulation, fingerprint mismatch	Full reactivation
+
+These thresholds are data-driven, not hardcoded.
+
+4.3 AI Role
+
+AI models analyze aggregated telemetry to:
+
+Cluster devices by behavior
+
+Predict failure likelihood
+
+Recommend reactivation path
+
+Adjust grace periods dynamically
+
+Identify OEM-specific issues
+
+Flag suspicious time manipulation
+
+5. Master Control Panel (MCP) — Conceptual Scope
+5.1 Purpose
+
+The Master Control Panel is the operational brain of the ecosystem.
+
+It does not micromanage devices — it observes, correlates, and decides.
+
+5.2 Core MCP Domains
+5.2.1 Device Intelligence
+
+Device fingerprint
+
+Time behavior history
+
+Activation state
+
+Reactivation history
+
+Risk / trust score
+
+5.2.2 Time & TLS Health
+
+Offset distributions
+
+Drift trends
+
+TLS failure correlations
+
+Certificate error patterns
+
+Region / OEM heatmaps
+
+5.2.3 Activation & Reactivation Control
+
+Manual override
+
+Auto-renew policies
+
+Grace window tuning
+
+Device-specific rules
+
+5.2.4 Provider Health
+
+Endpoint reliability
+
+Cert validity monitoring
+
+Latency and error rates
+
+Region/provider mismatch detection
+
+5.2.5 Policy & AI Controls
+
+Threshold configuration
+
+Model recommendations vs enforcement
+
+Audit trail for decisions
+
+Experimentation toggles
+
+5.3 MCP Design Philosophy
+
+Observability first
+
+Decisions explainable
+
+AI advisory → AI assisted → AI driven (phased)
+
+No silent enforcement without visibility
+
+Human override always possible
+
+6. Architectural Direction (Explicit)
+Canonical Path (Declared)
+Device → SessionManager → XtreamRepository → Provider
+                   ↓
+             Time Attestation
+                   ↓
+             Telemetry → MCP → AI
+
+Legacy Path (Contained)
+
+Live playback remains supported
+
+Routed through canonical repository
+
+No new features added
+
+Explicitly sunset-eligible
+
+7. Strategic Note (Why This Matters)
+
+This architecture:
+
+Reduces false failures
+
+Improves user experience
+
+Hardens security without hostility
+
+Creates defensible IP
+
+Converts intuition into repeatable advantage
+
+This is where MiraTV stops being “an IPTV app” and becomes a managed platform.
+
+8. Status
+
+✅ Concept approved
+
+⏳ Implementation phased
+
+🧠 AI integration planned
+
+🧭 MCP design exploratory (intentionally)

@@ -1,0 +1,40 @@
+📄 MiraTV Series Pipeline — Locking & Concurrency Contract
+
+Status: AUTHORITATIVE
+Scope: Series pipeline only
+Audience: Humans, automation, future AI modules
+Last Updated: (today)
+
+1. Purpose
+
+This document defines how locking works in the MiraTV Series pipeline to guarantee:
+
+No duplicate processing
+
+Safe restarts
+
+Resume-after-crash behavior
+
+Future-safe parallel processing
+
+Deterministic automation
+
+If code violates this document, the code is wrong.
+
+2. Core Invariants (Non-Negotiable)
+
+Two locks must NOT exist on the same series
+
+At most one pipeline execution may run at a time
+
+Locks protect execution, not data
+
+Resets are explicit — never implicit
+
+Database state is the single source of truth
+
+3. Lock Types (Exactly Two)
+3.1 Pipeline Lock (Global)
+
+Purpose:
+Prevents multiple pipeline runs from executing concurrently.

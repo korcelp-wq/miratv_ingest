@@ -1,0 +1,472 @@
+# MiraTV – VOD & Series Playback Stabilization
+
+## Engineering Handoff Document
+
+### Project
+
+MiraTV Android IPTV Client + Xtream-Compatible Backend Gateway
+
+### Date
+
+2026-03-06
+
+---
+
+# 1. Executive Summary
+
+The MiraTV application now successfully supports:
+
+* VOD category browsing
+* VOD listing
+* VOD playback
+* Series playback
+* Xtream API compatibility layer
+
+The backend architecture uses a **database-first content model**, where the application queries the internal database first and only resolves the provider stream during playback.
+
+This architecture is intentional and correct because it:
+
+* Allows local metadata enrichment
+* Enables caching
+* Supports AI-assisted indexing later
+* Reduces provider API load
+* Allows multi-provider aggregation
+
+---
+
+# 2. Final Working Architecture
+
+```
+Android App
+     │
+     │ HTTP
+     ▼
+player_api.php
+(Xtream compatibility gateway)
+     │
+     │ PDO
+     ▼
+MySQL Stored Procedures
+     │
+     ▼
+Content Tables
+(vod, series, categories)
+```
+
+Provider systems are **not contacted until playback time**.
+
+---
+
+# 3. Core API Endpoint
+
+All client requests go through:
+
+```
+https://miratv.club/_workers/ai/player_api.php
+```
+
+Example:
+
+```
+?action=get_vod_categories
+?action=get_vod_streams
+?action=get_series
+```
+
+---
+
+# 4. Database Tables
+
+## vod_categories
+
+| column               | purpose                      |
+| -------------------- | ---------------------------- |
+| id                   | local DB ID                  |
+| provider_category_id | provider category identifier |
+| name                 | display name                 |
+| parent_id            | optional grouping            |
+| provider             | provider source              |
+
+Important distinction:
+
+```
+id != provider_category_id
+```
+
+---
+
+## vod
+
+| column          | purpose                    |
+| --------------- | -------------------------- |
+| vod_id          | local DB primary key       |
+| provider_vod_id | provider stream identifier |
+| category_id     | provider category ID       |
+| title           | movie title                |
+| poster_url      | artwork                    |
+| cover_url       | fallback artwork           |
+| rating          | rating                     |
+| added_at        | ingestion timestamp        |
+
+---
+
+# 5. Critical Bug That Was Fixed
+
+### Problem
+
+Categories were returning the **local ID** instead of the **provider category ID**.
+
+Example returned:
+
+```
+category_id = 2
+```
+
+But the VOD table stored:
+
+```
+category_id = 983
+```
+
+So the VOD query returned zero rows.
+
+---
+
+### Correct Fix
+
+The categories stored procedure now returns:
+
+```
+provider_category_id AS category_id
+```
+
+---
+
+# 6. Working Stored Procedures
+
+## sp_xtream_get_vod_categories
+
+```sql
+DROP PROCEDURE IF EXISTS sp_xtream_get_vod_categories;
+DELIMITER $$
+
+CREATE PROCEDURE sp_xtream_get_vod_categories(
+    IN p_username VARCHAR(255),
+    IN p_password VARCHAR(255)
+)
+BEGIN
+    SELECT COALESCE(
+        JSON_ARRAYAGG(
+            JSON_OBJECT(
+                'category_id', CAST(provider_category_id AS CHAR),
+                'category_name', name,
+                'parent_id', COALESCE(parent_id, 0)
+            )
+        ),
+        JSON_ARRAY()
+    ) AS json_result
+    FROM vod_categories
+    ORDER BY name;
+END$$
+
+DELIMITER ;
+```
+
+---
+
+## sp_xtream_get_vod_streams
+
+```sql
+DROP PROCEDURE IF EXISTS sp_xtream_get_vod_streams;
+DELIMITER $$
+
+CREATE PROCEDURE sp_xtream_get_vod_streams(
+    IN p_username VARCHAR(255),
+    IN p_password VARCHAR(255),
+    IN p_category_id VARCHAR(50)
+)
+BEGIN
+    SELECT COALESCE(
+        JSON_ARRAYAGG(
+            JSON_OBJECT(
+                'num', CAST(v.vod_id AS CHAR),
+                'name', v.title,
+                'stream_type', 'movie',
+                'stream_id', CAST(v.provider_vod_id AS CHAR),
+                'stream_icon', COALESCE(v.poster_url, v.cover_url, ''),
+                'rating', COALESCE(CAST(v.rating AS CHAR), ''),
+                'rating_5based', '',
+                'added', COALESCE(CAST(UNIX_TIMESTAMP(v.added_at) AS CHAR), ''),
+                'category_id', CAST(v.category_id AS CHAR),
+                'container_extension', 'mp4'
+            )
+        ),
+        JSON_ARRAY()
+    ) AS json_result
+    FROM vod v
+    WHERE p_category_id IS NULL
+       OR p_category_id = ''
+       OR CAST(v.category_id AS CHAR) = p_category_id;
+END$$
+
+DELIMITER ;
+```
+
+---
+
+# 7. Android Client Flow
+
+## Categories
+
+```
+VodCategoriesActivity
+    ↓
+getVodCategories()
+    ↓
+player_api.php?action=get_vod_categories
+```
+
+Log example:
+
+```
+getVodCategories returned 185 rows
+```
+
+---
+
+## Category Click
+
+```
+VodListActivity
+    ↓
+getVodStreams(categoryId)
+```
+
+Example:
+
+```
+Calling getVodStreams for categoryId=983
+```
+
+---
+
+## Playback
+
+Playback uses the provider ID:
+
+```
+stream_id = provider_vod_id
+```
+
+Resulting URL format:
+
+```
+/movie/{username}/{password}/{stream_id}.mp4
+```
+
+---
+
+# 8. Important Architectural Rule
+
+### Always Query Local Database First
+
+Never call provider APIs directly for:
+
+* category lists
+* VOD lists
+* series lists
+
+Provider APIs should only be used for:
+
+```
+final playback stream resolution
+```
+
+This allows MiraTV to function as a **content intelligence platform** rather than a simple IPTV client.
+
+---
+
+# 9. Next Recommended Engineering Steps
+
+## 1. Unify Gateway Code
+
+Right now there are multiple versions of `player_api.php`.
+
+Recommended structure:
+
+```
+_workers/
+    ai/
+        player_api.php
+    player/
+        player_api.php
+```
+
+Choose one canonical gateway.
+
+---
+
+## 2. Standardize Stored Procedure Naming
+
+Current mix:
+
+```
+sp_xtream_get_*
+sp_get_*
+```
+
+Recommended:
+
+```
+sp_xtream_live_*
+sp_xtream_vod_*
+sp_xtream_series_*
+```
+
+---
+
+## 3. Add Query Indexes
+
+Important indexes:
+
+```
+vod(category_id)
+vod(provider_vod_id)
+vod_categories(provider_category_id)
+series(category_id)
+```
+
+This prevents slow queries at scale.
+
+---
+
+## 4. Add Provider Abstraction Layer
+
+Future design:
+
+```
+providers
+provider_categories
+provider_streams
+```
+
+Allows MiraTV to support:
+
+* multiple IPTV providers
+* content deduplication
+* unified catalog
+
+---
+
+## 5. Implement Metadata Enrichment
+
+Add fields:
+
+```
+imdb_id
+tmdb_id
+genre
+actors
+director
+runtime
+```
+
+Then run enrichment jobs.
+
+---
+
+## 6. AI-Driven Content Intelligence
+
+Because the DB structure is clean, the system can now support:
+
+* automatic genre clustering
+* duplicate detection
+* recommendation engines
+* content tagging
+
+This ties directly into the **PCDE / CVI architecture**.
+
+---
+
+## 7. Implement Stream Resolver Layer
+
+Instead of hardcoding stream URLs:
+
+```
+resolve_stream.php
+```
+
+Responsibilities:
+
+```
+provider selection
+failover
+load balancing
+CDN routing
+```
+
+---
+
+## 8. Build Admin Dashboard
+
+For:
+
+```
+catalog health
+provider sync
+missing artwork
+stream failures
+```
+
+---
+
+# 10. Strategic Value
+
+This architecture positions MiraTV as:
+
+```
+AI-Assisted Content Intelligence Platform
+```
+
+not just an IPTV player.
+
+Future monetization layers:
+
+* provider aggregation
+* white-label IPTV
+* content analytics
+* recommendation engines
+* local content networks
+
+---
+
+# 11. Current System Status
+
+| Feature         | Status      |
+| --------------- | ----------- |
+| Live TV         | operational |
+| VOD categories  | operational |
+| VOD listing     | operational |
+| VOD playback    | operational |
+| Series browsing | operational |
+| Series playback | operational |
+| Gateway routing | stable      |
+| DB schema       | stable      |
+
+---
+
+# 12. Immediate Next Development Target
+
+Focus should move to:
+
+```
+playback reliability
+provider abstraction
+catalog intelligence
+```
+
+rather than UI.
+
+The backend foundation is now correct.
+
+---

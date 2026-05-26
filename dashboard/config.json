@@ -1,0 +1,38 @@
+{
+    "cvi_endpoint": "/api.php",
+    "token": "WYWIQAB5ICKL2VUW9PW98IYF2JMNF9XY",
+    "default_db": "pcde_memory",
+    "databases": [
+        "pcde_memory",
+        "content",
+        "ip",
+        "ops",
+        "inhibitor_govenor_matrix",
+        "callosum_matrix",
+        "lake_knowledge",
+        "lake_vector",
+        "i_m_g_vector_context"
+    ],
+    "quick_actions": [
+        {
+            "name": "📋 Working Memory",
+            "sql": "SELECT * FROM pcde_working_memory ORDER BY created_at DESC",
+            "params": []
+        },
+        {
+            "name": "🧠 AI Learnings",
+            "sql": "SELECT * FROM pcde_ai_memory ORDER BY confidence DESC",
+            "params": []
+        },
+        {
+            "name": "📚 All Procedures",
+            "sql": "SELECT procedure_id, procedure_name, domain FROM pcde_procedure_registry ORDER BY procedure_id",
+            "params": []
+        },
+        {
+            "name": "❌ Recent Failures",
+            "sql": "SELECT * FROM pcde_procedure_failure ORDER BY last_error_at DESC LIMIT 10",
+            "params": []
+        }
+    ]
+}

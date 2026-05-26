@@ -1,0 +1,358 @@
+📘 MIRA TV — MASTER CONSOLIDATED ARCHITECTURE ADDENDUM
+
+Status: 🔒 LOCKED / AUTHORITATIVE
+Applies To: MiraTV Platform (Client, Backend, Ingest, Control Plane)
+Effective: Immediately
+Change Policy: Append-only (new sections only)
+Supersedes: All standalone addenda and draft notes
+
+1️⃣ Canonical Platform Laws (Immutable)
+
+MiraTV owns truth. Providers are referential only.
+
+UI never waits. All discovery is DB-backed and deterministic.
+
+Identity is canonical. Provider IDs are mappings, not truth.
+
+Perception ≠ correctness. UX layers may deceive perception only.
+
+Observation precedes enforcement. Behavior informs decisions.
+
+Playback is sacred. Nothing may delay or interfere with playback.
+
+Violation of any law invalidates the implementation.
+
+2️⃣ Content Decoupling & Database-First Mandate
+Locked Rule
+
+The MiraTV application must not depend on provider APIs for UI rendering.
+
+Canonical Flow
+Provider (async)
+   ↓
+Ingest Workers
+   ↓
+MiraTV Database (authoritative)
+   ↓
+Internal API
+   ↓
+Android App UI
+
+Explicit Boundary
+
+Metadata & IDs → database
+
+Playback URLs → constructed only at play time
+
+Provider APIs are never called synchronously by UI
+
+MiraTV is formally classified as a middleware-driven IPTV platform, not a thin provider client.
+
+3️⃣ Provider Normalization & Concurrent ID Mapping
+Canonical Rule
+
+Providers describe claims, not identity.
+
+Core Artifact
+
+provider_content_map
+
+Supports:
+
+Multiple providers → same content
+
+One provider → multiple content types
+
+Concurrent Live / VOD / Series representations
+
+No destructive merges.
+No forced reconciliation at ingest.
+Similarity and intelligence come later.
+
+Concurrency is intentional, not accidental.
+
+4️⃣ Ingestion Architecture (Final & Proven)
+Accepted Reality
+
+EPG is XML, not JSON
+
+Payloads are large
+
+Windows tooling has hard limits
+
+Authoritative Strategy
+
+Push raw files (SCP / curl)
+
+Parse server-side
+
+Stream ingest (XMLReader)
+
+Enforce correctness with DB constraints
+
+Outcome
+
+Fully automated Live / VOD / Series / EPG ingest
+
+Safe re-runs
+
+Deterministic state
+
+Platform-grade reliability
+
+5️⃣ SCP Push Workflow (Locked)
+Directionality (Invariant)
+PC → SCP → Server → PHP Importer → Database
+
+
+Rules:
+
+Server never pulls
+
+Uploads are atomic (.tmp → rename)
+
+Importers are token-gated
+
+JSON is data only, never executable
+
+Approved for:
+
+Scheduled automation
+
+Incremental updates
+
+Future ingest domains
+
+6️⃣ UX Decoy Cache (Perception-Only Layer)
+Purpose
+
+Manage human perception, not correctness.
+
+Characteristics:
+
+Local
+
+Read-only
+
+Disposable
+
+Non-authoritative
+
+Fail-silent
+
+If deleted entirely, nothing breaks.
+
+Any attempt to evolve this into a “real cache” is a violation.
+
+7️⃣ Streamer Channels & Social Runtime (Bounded) 🔒
+Hard Scope Boundary
+
+Streamer functionality is only an out-of-band social runtime attached to designated channels.
+
+It does not:
+
+Modify playback
+
+Embed in streams
+
+Alter provider contracts
+
+Grant client authority
+
+Convert MiraTV into a social network
+
+Architectural Model
+Playback Stream (provider)
+        +
+Social Runtime (MiraTV)
+        ↓
+Unified Streamer Channel Experience
+
+
+Playback and social layers must fail independently.
+
+Absolute Invariant
+
+Playback stability always has priority over social features.
+
+8️⃣ Activation, Login & Provider Handshake (Source of Truth)
+Core Principle
+
+“MAC” is an opaque identifier, not a hardware requirement.
+
+Stored once
+
+Never regenerated
+
+Compared as an exact string
+
+Trusted by backend
+
+Startup Flow (Locked)
+App Launch
+ → Splash (local validation only)
+   → Activation (if needed)
+     → Provider Login
+       → Home
+
+
+Splash must not:
+
+Call backend
+
+Call provider
+
+Regenerate MAC
+
+Modify session state
+
+Activation Endpoint
+GET /api.php?fn=auth
+
+
+Supports:
+
+Activation code
+
+MAC-based login / recovery
+
+Query parameters are mandatory due to hosting/WAF behavior.
+
+9️⃣ API Parameters — Activation & Auth (Production-Verified)
+Key Rules
+
+fn=auth is public bootstrap
+
+Uses query parameters only
+
+No request body required
+
+No Authorization header required
+
+All other endpoints require API key headers.
+
+This constraint is environmental, not optional.
+
+🔟 Time Attestation & Reactivation Intelligence
+Foundational Principle
+
+The system does not assume device correctness — it observes behavior.
+
+Time as a Signal
+
+The platform continuously measures:
+
+Clock offset
+
+Drift rate
+
+Sudden jumps
+
+TLS correlation
+
+Network transitions
+
+This forms a Device Time Signature.
+
+Reactivation Is a Decision
+
+Not a rule.
+
+Possible paths:
+
+Silent
+
+Soft
+
+Assisted
+
+Hard
+
+Chosen dynamically based on observed behavior, not static thresholds.
+
+1️⃣1️⃣ Master Control Panel (MCP) — Declared Scope
+
+The MCP is the observational and decision brain, not a micromanager.
+
+Domains:
+
+Device intelligence
+
+Time & TLS health
+
+Activation control
+
+Provider health
+
+Policy & AI governance
+
+Design philosophy:
+
+Observability first
+
+Explainable decisions
+
+AI advises before it decides
+
+Human override always possible
+
+1️⃣2️⃣ Restore & Continuity Plan (Operational)
+Purpose
+
+Preserve momentum after tooling, build, or context loss.
+
+Guarantees:
+
+Single Gradle root
+
+Single :app module
+
+Known working dependency ranges
+
+Minimal fix pack only — no re-architecture
+
+This plan exists to restore working state, not introduce features.
+
+🔒 Global Invariants (Do Not Violate)
+
+Providers are never authoritative
+
+UI never blocks on ingest or providers
+
+Playback URLs are never stored
+
+UX deception never affects logic
+
+AI observes before acting
+
+Playback always wins
+
+Any implementation violating these is architecturally invalid.
+
+✅ FINAL STATUS
+
+This Master Addendum now fully incorporates:
+
+Streamer Channels & Social Runtime
+
+Time Attestation & MCP
+
+Activation / Login / Auth contracts
+
+Production API constraints
+
+Restore & continuity strategy
+
+It is now suitable to:
+
+Anchor future development
+
+Reset chats safely
+
+Defend architectural decisions
+
+Serve as OEM / partner disclosure
+
+Act as the single source of truth
+
+This document is final.

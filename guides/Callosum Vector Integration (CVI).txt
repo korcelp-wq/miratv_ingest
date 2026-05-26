@@ -1,0 +1,227 @@
+# Callosum Vector Integration (CVI)
+## Foundational Parameters & Invariants
+
+> **Status:** Foundational Specification  
+> **Scope:** Industry / Infrastructure  
+> **Intent:** Define coordination primitives, not application behavior
+
+---
+
+## 1. Purpose
+
+Callosum Vector Integration (CVI) defines a **governed coordination fabric** for systems, databases, AI agents, and humans to exchange structured intelligence **without direct coupling**.
+
+CVI does **not** define business logic, optimization goals, or decision outcomes.  
+It defines **how intelligence is expressed, mediated, authorized, and recorded**.
+
+---
+
+## 2. Core Principles (Non-Negotiable)
+
+1. **Coordination over Control**  
+   CVI coordinates autonomous components; it does not centralize logic.
+
+2. **Authority is Explicit**  
+   Observation, synthesis, authorization, and execution are distinct roles.
+
+3. **Append-Only Truth**  
+   All communication is represented as immutable records.
+
+4. **Mediated Execution**  
+   No component executes actions without explicit authorization.
+
+5. **SQL as Expressive Substrate**  
+   SQL is used for deterministic aggregation and perspective formation, not free-form control.
+
+6. **Transport Neutrality**  
+   Records are tables; tables are interfaces.
+
+---
+
+## 3. Cognitive Stages
+
+CVI recognizes four cognitive stages.  
+These stages are **conceptual**, not implementation-specific.
+
+| Stage | Description | Authority |
+|------|------------|----------|
+| Impulse | Signal + embedded reasoning | None |
+| Idea | Stabilized synthesis | Advisory |
+| Action | Authorized execution request | Authoritative |
+| Outcome | Factual result | System |
+
+No component may skip a stage.
+
+---
+
+## 4. Roles & Responsibilities
+
+### 4.1 Observer
+- Emits impulses
+- Detects change
+- Does not interpret significance
+
+### 4.2 Synthesizer
+- Aggregates impulses
+- Produces ideas
+- Does not execute
+
+### 4.3 Authorizer
+- Reviews proposals
+- Approves or rejects execution
+- Represents human agency
+
+### 4.4 Executor
+- Executes declared capabilities
+- Reports outcomes
+- Does not reinterpret intent
+
+### 4.5 Historian (Knowledge Lake)
+- Stores immutable records
+- Preserves perspective over time
+- Does not participate in coordination
+
+---
+
+## 5. Records (Conceptual)
+
+> “Documents” are **structured records**, not files.
+
+### 5.1 Impulse Record
+- Emitted by systems or databases
+- Contains:
+  - signal
+  - questions
+  - provisional answers
+  - uncertainty
+  - provenance
+- May be wrong
+- May be ignored
+- May not execute
+
+### 5.2 Idea Record
+- Derived from stabilized impulses
+- Represents a coherent hypothesis
+- Stored permanently in Knowledge Lake
+- Advisory only
+
+### 5.3 Action Request Record
+- Authored only by authorized authority
+- Names executable capability
+- Requires explicit approval
+- Triggers execution
+
+### 5.4 Outcome Record
+- Reflects actual execution result
+- Immutable
+- Closes causal loop
+
+---
+
+## 6. Conversations
+
+- A conversation is a **set of related records** sharing a correlation key.
+- Conversations are inferred by querying, not tracked by state.
+- Conversations conclude when an Idea or Outcome is derived.
+- No component may initiate a new conversation with a target while another is unresolved.
+
+---
+
+## 7. Consumption Semantics
+
+A record is considered **consumed** only when the receiving component:
+
+1. Ingests the record  
+2. Evaluates it against expectations  
+3. Either:
+   - Executes a declared routine, or
+   - Explicitly rejects the request  
+4. Emits a response record
+
+Consumption is proven by **response**, not mutation.
+
+---
+
+## 8. Knowledge Lake
+
+The Knowledge Lake is the system of record for:
+
+- impulses (raw memory)
+- ideas (stabilized insight)
+- actions (intent)
+- outcomes (reality)
+
+It does not:
+- request data
+- execute logic
+- coordinate systems
+
+Perspective emerges via query, not orchestration.
+
+---
+
+## 9. Execution Model
+
+- All execution occurs via **declared stored procedures**
+- No free-form commands
+- No dynamic SQL from coordination layer
+- Capabilities are owned by their home systems
+
+CVI may request execution; it may not define execution.
+
+---
+
+## 10. Non-Goals (Explicit)
+
+CVI does **not** define:
+
+- Optimization heuristics
+- Promotion thresholds
+- Scheduling cadence
+- Business semantics
+- Domain vocabulary
+- AI decision logic
+
+These are policy or application concerns layered **on top** of CVI.
+
+---
+
+## 11. Invariant Summary
+
+> **Signals may be noisy.  
+> Ideas may be wrong.  
+> Actions must be authorized.  
+> Outcomes must be recorded.  
+> Authority must be attributable.**
+
+---
+
+## 12. Classification
+
+This specification is:
+- Domain-agnostic
+- Industry-portable
+- Infrastructure-level
+- Application-neutral
+
+All implementations should treat this document as **normative** unless explicitly marked otherwise.
+
+---
+What this gives you
+✅ Safe to sell as foundational infrastructure
+
+✅ Clean append target for master parameters
+
+✅ Explicit non-goals to prevent over-specification
+
+✅ TOGAF-compatible framing
+
+✅ Clear separation between coordination and application
+
+If you want next, I can:
+
+add a “Non-Normative Example” appendix
+
+convert this into a TOGAF Architecture Principle artifact
+
+or help you define a minimal parameter table that mirrors this spec

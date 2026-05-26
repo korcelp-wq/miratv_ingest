@@ -1,0 +1,14 @@
+{
+  "Servers": [
+    {
+      "Name": "LocalHost",
+      "Instance": "localhost",
+      "Type": "SQLServer"
+    }
+  ],
+  "UseIntegratedSecurity": true,
+  "SQLUsername": "",
+  "SQLPassword": "",
+  "CheckIntervalMinutes": 60,
+  "TimeoutSeconds": 30
+}

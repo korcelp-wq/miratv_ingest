@@ -1,0 +1,1 @@
+﻿scp C:\miratv_ingest\export\epg.xml automated@miratv.club:/home/xpdgxfsp/public_html/_ingest/epg.xml

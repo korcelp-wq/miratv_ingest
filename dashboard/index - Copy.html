@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MiraTV Master Control Dashboard</title>
+    <style>
+        :root {
+            --bg-dark: #0a0c10;
+            --bg-panel: #161b22;
+            --border: #30363d;
+            --text: #e6edf3;
+            --text-muted: #8b949e;
+            --accent: #2f81f7;
+            --success: #3fb950;
+            --warning: #d29922;
+            --danger: #f85149;
+            --input-bg: #0d1117;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', monospace;
+        }
+        
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text);
+            padding: 20px;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .title {
+            font-size: 24px;
+            font-weight: 600;
+        }
+        
+        .title span {
+            color: var(--accent);
+            font-size: 14px;
+            margin-left: 10px;
+            background: rgba(47, 129, 247, 0.1);
+            padding: 4px 8px;
+            border-radius: 20px;
+        }
+        
+        .status {
+            display: flex;
+            gap: 20px;
+        }
+        
+        .status-badge {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            background: rgba(63, 185, 80, 0.1);
+            border: 1px solid var(--success);
+            color: var(--success);
+        }
+        
+        .main-panel {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .panel {
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+        }
+        
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            font-size: 14px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .query-area {
+            background: var(--input-bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 15px;
+            font-family: 'SF Mono', monospace;
+            font-size: 14px;
+            color: var(--text);
+            width: 100%;
+            min-height: 120px;
+            resize: vertical;
+            margin-bottom: 15px;
+        }
+        
+        .query-area:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+        
+        .db-selector {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .db-button {
+            padding: 8px 16px;
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text);
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+        
+        .db-button:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+        
+        .db-button.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+        
+        .params-area {
+            background: var(--input-bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 15px;
+            font-family: 'SF Mono', monospace;
+            font-size: 14px;
+            color: var(--text);
+            width: 100%;
+            min-height: 80px;
+            margin-bottom: 15px;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .primary-button {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            font-size: 14px;
+            transition: opacity 0.2s;
+        }
+        
+        .primary-button:hover {
+            opacity: 0.9;
+        }
+        
+        .secondary-button {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .results-area {
+            background: var(--input-bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 20px;
+            min-height: 300px;
+            max-height: 500px;
+            overflow: auto;
+            font-family: 'SF Mono', monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            margin-bottom: 15px;
+        }
+        
+        .quick-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 15px;
+        }
+        
+        .action-card {
+            background: var(--input-bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 15px;
+            flex: 1;
+            min-width: 200px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .action-card:hover {
+            border-color: var(--accent);
+            transform: translateY(-2px);
+        }
+        
+        .action-card h3 {
+            font-size: 14px;
+            margin-bottom: 8px;
+            color: var(--accent);
+        }
+        
+        .action-card p {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        
+        .log-area {
+            background: var(--input-bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 15px;
+            font-family: 'SF Mono', monospace;
+            font-size: 12px;
+            color: var(--text-muted);
+            max-height: 150px;
+            overflow: auto;
+        }
+        
+        .log-entry {
+            padding: 4px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .log-time {
+            color: var(--accent);
+            margin-right: 10px;
+        }
+        
+        .error {
+            color: var(--danger);
+        }
+        
+        .success {
+            color: var(--success);
+        }
+        
+        .token-display {
+            background: var(--input-bg);
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            color: var(--text-muted);
+            border: 1px solid var(--border);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="title">
+                🎮 MiraTV Master Control Dashboard 
+                <span>CVI via dog_open.php</span>
+            </div>
+            <div class="status">
+                <div class="status-badge">🔌 Connected to CVI</div>
+                <div class="token-display">Token: ••••••••••••••••</div>
+            </div>
+        </div>
+
+        <div class="main-panel">
+            <!-- Left Panel: Query Interface -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span>🔍 CVI Query Interface</span>
+                    <span>dog_open.php</span>
+                </div>
+                
+                <div class="db-selector">
+                    <button class="db-button active" data-db="xpdgxfsp_pcde_memory">PCDE Memory</button>
+                    <button class="db-button" data-db="xpdgxfsp_content">Content</button>
+                    <button class="db-button" data-db="xpdgxfsp_ip">IP/Activation</button>
+                    <button class="db-button" data-db="xpdgxfsp_ops">Ops</button>
+                    <button class="db-button" data-db="inhibitor_govenor_matrix">Governance</button>
+                    <button class="db-button" data-db="callosum_matrix">Callosum</button>
+                    <button class="db-button" data-db="lake_knowledge">Lake Knowledge</button>
+                    <button class="db-button" data-db="lake_vector">Lake Vector</button>
+                </div>
+                
+                <textarea id="sqlInput" class="query-area" placeholder="Enter SQL query with ? placeholders...">SELECT procedure_id, procedure_name, domain, procedure_type, LEFT(description, 100) as description_preview FROM pcde_procedure_registry WHERE domain = ? LIMIT 10;</textarea>
+                
+                <textarea id="paramsInput" class="params-area" placeholder="Parameters array (JSON format)">["ingest"]</textarea>
+                
+                <div class="button-group">
+                    <button id="executeBtn" class="primary-button">🚀 Execute via CVI</button>
+                    <button id="clearBtn" class="secondary-button">Clear Results</button>
+                    <button id="formatBtn" class="secondary-button">Format SQL</button>
+                </div>
+                
+                <div class="quick-actions">
+                    <div class="action-card" data-action="procedures">
+                        <h3>📋 List All Procedures</h3>
+                        <p>SELECT * FROM pcde_procedure_registry LIMIT 20</p>
+                    </div>
+                    <div class="action-card" data-action="failures">
+                        <h3>⚠️ Recent Failures</h3>
+                        <p>SELECT * FROM pcde_procedure_failure ORDER BY last_error_at DESC LIMIT 10</p>
+                    </div>
+                    <div class="action-card" data-action="ai_memory">
+                        <h3>🧠 AI Learnings</h3>
+                        <p>SELECT * FROM pcde_ai_memory ORDER BY confidence DESC LIMIT 10</p>
+                    </div>
+                    <div class="action-card" data-action="relations">
+                        <h3>🔗 Procedure Relations</h3>
+                        <p>SELECT * FROM pcde_procedure_relations LIMIT 20</p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Right Panel: Results -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span>📊 Query Results</span>
+                    <span id="resultMeta"></span>
+                </div>
+                
+                <pre id="resultsArea" class="results-area">{
+  "message": "Execute a query to see results",
+  "example": "Click 'List All Procedures' above"
+}</pre>
+                
+                <div class="button-group">
+                    <button id="copyBtn" class="secondary-button">📋 Copy Results</button>
+                    <button id="saveLearningBtn" class="secondary-button">💾 Save as Learning</button>
+                    <button id="checkGovernanceBtn" class="secondary-button">⚖️ Check Governance</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Bottom Panel: Activity Log -->
+        <div class="panel">
+            <div class="panel-header">
+                <span>📝 Activity Log</span>
+                <span id="logCount">0 entries</span>
+            </div>
+            <div id="logArea" class="log-area">
+                <div class="log-entry">
+                    <span class="log-time">[12:34:56]</span> Dashboard initialized. Ready for commands.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        const CVI_ENDPOINT = 'https://miratv.club/_workers/api/series/dog_open.php';
+        const TOKEN = 'WYWIQAB5ICKL2VUW9PW98IYF2JMNF9XY';
+        
+        // State
+        let currentDb = 'xpdgxfsp_pcde_memory';
+        let currentResults = null;
+        let logEntries = [];
+        
+        // DOM Elements
+        const sqlInput = document.getElementById('sqlInput');
+        const paramsInput = document.getElementById('paramsInput');
+        const resultsArea = document.getElementById('resultsArea');
+        const logArea = document.getElementById('logArea');
+        const resultMeta = document.getElementById('resultMeta');
+        const logCount = document.getElementById('logCount');
+        
+        // Database selector buttons
+        document.querySelectorAll('.db-button').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.db-button').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentDb = btn.dataset.db;
+                addLog(`Switched to database: ${currentDb}`);
+            });
+        });
+        
+        // Execute query
+        document.getElementById('executeBtn').addEventListener('click', async () => {
+            const sql = sqlInput.value.trim();
+            if (!sql) {
+                addLog('⚠️ No SQL query entered', 'error');
+                return;
+            }
+            
+            let params = [];
+            try {
+                params = JSON.parse(paramsInput.value || '[]');
+                if (!Array.isArray(params)) throw new Error('Params must be an array');
+            } catch (e) {
+                addLog('❌ Invalid parameters JSON: ' + e.message, 'error');
+                return;
+            }
+            
+            addLog(`🔍 Executing on ${currentDb}: ${sql.substring(0, 60)}...`);
+            
+            try {
+                const response = await fetch(CVI_ENDPOINT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        token: TOKEN,
+                        db: currentDb,
+                        sql: sql,
+                        params: params
+                    })
+                });
+                
+                const data = await response.json();
+                currentResults = data;
+                
+                // Format display
+                resultsArea.textContent = JSON.stringify(data, null, 2);
+                
+                // Update metadata
+                const rowCount = data.rows ? data.rows.length : (data.length || 0);
+                resultMeta.textContent = `${rowCount} rows returned`;
+                
+                addLog(`✅ Query executed successfully (${rowCount} rows)`, 'success');
+                
+            } catch (error) {
+                resultsArea.textContent = JSON.stringify({ error: error.message }, null, 2);
+                addLog(`❌ Query failed: ${error.message}`, 'error');
+            }
+        });
+        
+        // Quick actions
+        document.querySelectorAll('.action-card').forEach(card => {
+            card.addEventListener('click', () => {
+                const action = card.dataset.action;
+                const sql = card.querySelector('p').textContent;
+                sqlInput.value = sql;
+                paramsInput.value = '[]';
+                addLog(`📋 Loaded preset: ${action}`);
+            });
+        });
+        
+        // Clear results
+        document.getElementById('clearBtn').addEventListener('click', () => {
+            resultsArea.textContent = '{}';
+            currentResults = null;
+            resultMeta.textContent = '';
+            addLog('🧹 Results cleared');
+        });
+        
+        // Format SQL
+        document.getElementById('formatBtn').addEventListener('click', () => {
+            const sql = sqlInput.value;
+            // Basic formatting - uppercase keywords
+            const formatted = sql
+                .replace(/\bselect\b/gi, 'SELECT')
+                .replace(/\bfrom\b/gi, 'FROM')
+                .replace(/\bwhere\b/gi, 'WHERE')
+                .replace(/\bjoin\b/gi, 'JOIN')
+                .replace(/\bleft\b/gi, 'LEFT')
+                .replace(/\border by\b/gi, 'ORDER BY')
+                .replace(/\blimit\b/gi, 'LIMIT');
+            
+            sqlInput.value = formatted;
+            addLog('✨ SQL formatted');
+        });
+        
+        // Copy results
+        document.getElementById('copyBtn').addEventListener('click', () => {
+            if (!currentResults) {
+                addLog('⚠️ No results to copy', 'error');
+                return;
+            }
+            
+            navigator.clipboard.writeText(JSON.stringify(currentResults, null, 2));
+            addLog('📋 Results copied to clipboard', 'success');
+        });
+        
+        // Save as learning (add to pcde_ai_memory)
+        document.getElementById('saveLearningBtn').addEventListener('click', async () => {
+            if (!currentResults) {
+                addLog('⚠️ No results to save', 'error');
+                return;
+            }
+            
+            const insight = prompt('What did you learn from this?', 'Identified pattern in query results');
+            if (!insight) return;
+            
+            const sql = `
+                INSERT INTO pcde_ai_memory 
+                (agent_name, memory_type, key_data, confidence, created_at)
+                VALUES ('human_operator', 'learning', ?, 0.95, NOW())
+            `;
+            
+            try {
+                const response = await fetch(CVI_ENDPOINT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        token: TOKEN,
+                        db: 'xpdgxfsp_pcde_memory',
+                        sql: sql,
+                        params: [insight + '\n\nContext: ' + JSON.stringify(currentResults).substring(0, 200)]
+                    })
+                });
+                
+                addLog('💾 Learning saved to pcde_ai_memory', 'success');
+                
+            } catch (error) {
+                addLog(`❌ Failed to save: ${error.message}`, 'error');
+            }
+        });
+        
+        // Check governance
+        document.getElementById('checkGovernanceBtn').addEventListener('click', async () => {
+            const action = prompt('What action to check?', 'query_database');
+            if (!action) return;
+            
+            const sql = `
+                SELECT r.rule_code, r.severity, e.decision 
+                FROM inhibitor_govenor_matrix.igm_rules r
+                LEFT JOIN inhibitor_govenor_matrix.igm_rule_evaluations e 
+                    ON r.rule_id = e.rule_id 
+                    AND e.component_id = 'human_operator'
+                    AND e.action_context LIKE ?
+                WHERE r.active = 1
+                ORDER BY e.evaluated_at DESC
+                LIMIT 5
+            `;
+            
+            try {
+                const response = await fetch(CVI_ENDPOINT, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        token: TOKEN,
+                        db: 'inhibitor_govenor_matrix',
+                        sql: sql,
+                        params: [`%${action}%`]
+                    })
+                });
+                
+                const data = await response.json();
+                resultsArea.textContent = JSON.stringify(data, null, 2);
+                addLog(`⚖️ Governance check for: ${action}`, 'success');
+                
+            } catch (error) {
+                addLog(`❌ Governance check failed: ${error.message}`, 'error');
+            }
+        });
+        
+        // Add log entry
+        function addLog(message, type = 'info') {
+            const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+            const logEntry = document.createElement('div');
+            logEntry.className = 'log-entry';
+            
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'log-time';
+            timeSpan.textContent = `[${time}]`;
+            
+            const messageSpan = document.createElement('span');
+            messageSpan.textContent = message;
+            if (type === 'error') messageSpan.style.color = 'var(--danger)';
+            if (type === 'success') messageSpan.style.color = 'var(--success)';
+            
+            logEntry.appendChild(timeSpan);
+            logEntry.appendChild(messageSpan);
+            
+            logArea.prepend(logEntry);
+            
+            // Keep only last 50 entries
+            logEntries.unshift({ time, message, type });
+            if (logEntries.length > 50) logEntries.pop();
+            
+            logCount.textContent = `${logEntries.length} entries`;
+        }
+        
+        // Add initial log
+        addLog('Dashboard ready. CVI endpoint: ' + CVI_ENDPOINT);
+    </script>
+</body>
+</html>

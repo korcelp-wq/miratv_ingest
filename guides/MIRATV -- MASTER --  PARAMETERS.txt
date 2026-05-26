@@ -1,0 +1,232 @@
+📺 MiraTV — Activation, Login & App Flow (AUTHORITATIVE PARAMETERS)
+
+Status: LOCKED / SOURCE OF TRUTH
+Scope: Android App + Backend Contract
+Last Verified: Prod (miratv.club)
+
+1️⃣ Core Principles (Non-Negotiable)
+MAC / Device ID
+
+“MAC” is an opaque identifier
+
+NOT required to be a real hardware MAC
+
+Implemented as:
+
+ANDROID_ID (or closest stable device identifier)
+
+Treated as:
+
+Exact string match
+
+Stored permanently client-side
+
+Entered manually in backend when provisioning customer
+
+Backend does no derivation, only comparison
+
+The backend trusts the string.
+The client never re-generates or mutates it.
+
+2️⃣ App Startup Flow (Splash → Activation → Home)
+🔹 Splash Screen (Every Launch)
+
+Purpose
+
+Visual startup
+
+Session validation
+
+Routing decision
+
+Logic
+
+App Launch
+ └─ SplashScreenActivity
+     ├─ Read SessionManager
+     │   ├─ mac (device_id)
+     │   ├─ username
+     │   ├─ password
+     │   ├─ expiry
+     │   └─ base_url
+     │
+     ├─ If ANY missing → ActivationActivity
+     │
+     ├─ If expired → clear credentials → ActivationActivity
+     │
+     └─ Else → CategoriesActivity (HOME)
+
+
+Splash does NOT
+
+Make network calls
+
+Regenerate MAC
+
+Modify session state
+
+3️⃣ Activation Flow (FIRST-TIME or RECOVERY)
+Entry Point
+ActivationActivity
+
+When Shown
+
+First install
+
+Session cleared
+
+Subscription expired
+
+MAC not recognized backend-side
+
+Backend Endpoint (ONLY)
+GET https://miratv.club/api.php?fn=auth
+
+Activation via CODE
+GET /api.php?fn=auth&code=AB12CD34
+
+Activation via MAC (re-bind / recovery)
+GET /api.php?fn=auth&mac=00:11:22:33:44:55
+
+✅ Successful Response
+{
+  "ok": true,
+  "status": "active",
+  "dns": "eldervpn.xyz",
+  "username": "USER123",
+  "password": "PASS123",
+  "expires": "2026-01-13",
+  "bound_to": "00:11:22:33:44:55"
+}
+
+❌ Failure Responses
+{ "ok": false, "reason": "invalid_credentials" }
+{ "ok": false, "reason": "account_expired" }
+{ "ok": false, "reason": "mac_not_associated" }
+
+Client Rules
+
+ONLY save session on ok:true
+
+Store:
+
+mac
+
+username
+
+password
+
+expires
+
+base_url (from dns)
+
+Never overwrite MAC
+
+Never cache failure responses
+
+4️⃣ SessionManager — Storage Contract
+Stored Permanently
+Key	Description
+mac	ANDROID_ID / opaque device identifier
+Stored Conditionally (ok:true)
+Key	Description
+username	IPTV username
+password	IPTV password
+base_url	Xtream base (e.g. eldervpn.xyz)
+expiry	Subscription expiration
+Expiry Handling
+
+On app launch:
+
+If expiry < today
+
+Clear username/password/base_url
+
+Keep MAC
+
+Route to ActivationActivity
+
+5️⃣ Home Screen Definition
+🏠 Home = Categories
+CategoriesActivity
+
+
+This is intentional and final.
+
+Why
+
+Matches IPTV mental model
+
+Previously working behavior
+
+Eliminates redundant “Home” screen
+
+6️⃣ Playback / Login (Every Launch)
+Authentication Source
+
+NOT miratv.club
+
+IPTV provider domain (e.g. eldervpn.xyz)
+
+Uses username + password only
+
+MAC is not used by playback provider
+
+Playback URL Pattern
+{base_url}/live/{username}/{password}/{stream_id}.ts
+
+PlayerActivity Rules
+
+MUST check SessionManager before playback
+
+MUST fail gracefully if credentials missing
+
+MUST NOT trigger activation directly
+
+7️⃣ What Is NOT Required (Yet)
+
+❌ POST /api.php?fn=device/register
+❌ JSON POST bodies
+❌ Authorization headers
+❌ Device fingerprinting beyond MAC
+❌ Push / FCM / notifications
+
+These are future features, not part of activation or login.
+
+8️⃣ Hosting Constraints (Important)
+
+Shared hosting (LiteSpeed / cPanel)
+
+php://input NOT reliable
+
+JSON POST bodies often stripped
+
+INLINE QUERY PARAMETERS REQUIRED
+
+This is why:
+
+/api.php?fn=auth&code=XXXX
+
+
+works
+and JSON POST does not.
+
+9️⃣ Correct Test Commands
+Browser / Curl (Guaranteed)
+curl "https://miratv.club/api.php?fn=auth&code=TESTCODE123"
+
+curl "https://miratv.club/api.php?fn=auth&mac=AA:BB:CC:DD:EE:FF"
+
+🔐 Final Guarantees
+
+No more activation loops
+
+No silent network failures
+
+No MAC confusion
+
+Deterministic startup routing
+
+Safe session persistence
+
+New chat can resume from this doc alone

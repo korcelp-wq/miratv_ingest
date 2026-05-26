@@ -1,0 +1,346 @@
+🧠 Cognitive Architecture Continuity Document
+
+Topic: Perspective, Deltas, Neuronet vs LLM, Agency, and the Publisher Boundary
+Status: Architecturally Settled
+Purpose: Preserve reasoning, decisions, and boundaries so future conversations resume without re-exploration
+
+1. Core Problem Being Solved
+
+Traditional AI systems:
+
+Mix computation, interpretation, and action
+
+Lack temporal awareness (no real “change over time”)
+
+Conflate intelligence with agency
+
+Rely on LLMs to infer confidence, truth, and relevance
+
+This architecture explicitly separates:
+
+Truth computation
+
+Perspective formation
+
+Interpretation
+
+Agency / action
+
+The goal is to build a situated cognitive system with:
+
+Measured change over time (deltas)
+
+Differentiated foci
+
+Bounded agency
+
+Auditability and stability
+
+2. Fundamental Insight: Perspective Is Computable
+Perspective is defined as:
+Perspective = Measured Change (Δ) × Selected Focus
+
+
+Δ (delta): Quantified change over time (semantic, statistical, structural)
+
+Focus: A scoped interpretive lens (SYSTEM, RISK, KNOWLEDGE, etc.)
+
+Without delta → focus is static bias
+Without focus → delta is noise
+
+Perspective does not live in the LLM or neuronet.
+It lives in preprocessed, structured data.
+
+3. Delta Measurement (What “Change Over Time” Means)
+
+Deltas are computed before AI involvement, using SQL / algorithms.
+
+Examples:
+
+3.1 Semantic Deltas
+
+Vector similarity drift over time
+
+Cluster cohesion strengthening / fragmenting
+
+3.2 Statistical Deltas
+
+Mean similarity rising/falling
+
+Stddev widening (fragmentation)
+
+Entropy increasing (disagreement)
+
+3.3 Structural Deltas
+
+Emergence of new dominant clusters
+
+Decay of previously central domains
+
+Shift in dominant focus areas
+
+These are facts, not interpretations.
+
+4. Focus (Differentiated Lenses)
+
+The system supports multiple foci over the same deltas.
+
+Current state:
+
+SYSTEM / CVI-wide focus (whole organism view)
+
+This is valid but coarse.
+
+Planned expandable foci (non-exhaustive):
+
+SYSTEM (overall coherence & health)
+
+KNOWLEDGE (truth convergence / fragmentation)
+
+RISK (uncertainty, instability)
+
+USER / INTENT
+
+PERFORMANCE / COST
+
+GOVERNANCE / ALIGNMENT
+
+LEARNING / ADAPTATION
+
+Important rule:
+
+The AI does not choose the focus.
+The system selects the focus.
+
+5. Neuronet vs LLM — Settled Roles
+5.1 Neuronet (Primary Cognitive Engine)
+
+What it is:
+
+Non-linguistic cognition
+
+Numerical judgment engine
+
+Responsibilities:
+
+Consume structured deltas + aggregates
+
+Detect patterns, drift, anomalies
+
+Score severity, confidence, trends
+
+Promote or suppress signals
+
+Outputs:
+
+Signals only (no prose)
+
+Example:
+
+{
+  "signal": "knowledge_fragmentation",
+  "severity": 0.73,
+  "trend": "increasing",
+  "confidence": 0.81,
+  "supporting_metrics": {
+    "entropy_delta": 0.14,
+    "stddev_delta": 0.09
+  }
+}
+
+
+Hard prohibitions:
+
+No explanations
+
+No user interaction
+
+No policy decisions
+
+No execution of actions
+
+Neuronet agency is bounded and reflexive, not decisive.
+
+5.2 LLM (Interpretive Layer Only)
+
+What it is:
+
+Symbolic, linguistic cognition
+
+Responsibilities:
+
+Explain what neuronet signals mean
+
+Articulate implications and tradeoffs
+
+Generate human-aligned narratives
+
+Respect confidence and constraints
+
+Hard prohibitions:
+
+No truth computation
+
+No score invention
+
+No overriding deltas
+
+No autonomous action
+
+LLMs never see raw vectors, thresholds, or heuristics.
+
+6. The Critical Missing Component (Now Explicit)
+🧩 Perspective Report Publisher (Keystone)
+
+Purpose:
+Deterministic translation layer between neuronet and LLM.
+
+Why it must exist:
+
+Prevents hidden coupling
+
+Freezes perspective in time
+
+Enforces schema and focus
+
+Enables auditing and diffing
+
+The Publisher:
+
+Does NOT reason
+
+Does NOT interpret
+
+Does NOT prioritize narratively
+
+It assembles Perspective Reports.
+
+7. Perspective Report (What the LLM Actually Sees)
+
+Example structure:
+
+{
+  "focus": "SYSTEM",
+  "time_window": "t0 → t1",
+  "signals": [...],
+  "top_evidence": [...],
+  "confidence_summary": {
+    "overall": 0.79,
+    "stability": "declining"
+  },
+  "constraints": {
+    "allowed_actions": ["notify", "analyze"]
+  }
+}
+
+
+Once published:
+
+Reality is no longer negotiable.
+
+LLMs only interpret published perspective.
+
+8. Agency Model (Who Can Do What)
+8.1 Key Rule (Load-Bearing)
+
+No component is allowed to both compute truth and act upon it.
+
+8.2 Agency Types
+Client Agency (Human-Facing)
+
+Express intent
+
+Select focus
+
+Request comparisons
+
+Promote insights to review
+
+❌ Cannot mutate truth
+❌ Cannot trigger system actions directly
+
+Backend Agency (Execution)
+
+Deterministic actions
+
+Logged, permissioned
+
+Acts only via policy gates
+
+Governance / Sentinel Agency
+
+Enforces limits
+
+Halts actions
+
+Requires human approval
+
+Neuronet Agency (Bounded)
+
+Trigger deeper analysis
+
+Promote signals → candidates
+
+Request validation
+
+No execution authority.
+
+9. End-to-End Cognitive Loop (Final Form)
+Reality / Data Sources
+        ↓
+Delta + Aggregate Computation (SQL / Algorithms)
+        ↓
+Focus Selection (SYSTEM, RISK, etc.)
+        ↓
+Neuronet (signals, scores, trends)
+        ↓
+Perspective Report Publisher
+        ↓
+LLM (interpretation & explanation)
+        ↓
+Agency Gates (policy & permissions)
+        ↓
+Client / Backend Actions
+
+
+Never reversed. Never collapsed.
+
+10. Final Architectural Truths (Do Not Revisit)
+
+Perspective is computed, not imagined
+
+Neuronet notices; LLM explains; system decides
+
+LLMs must never be subscribed to raw signals
+
+Publication beats subscription
+
+Agency must be explicit, typed, logged, revocable
+
+Awareness without agency is safe
+
+Agency without perspective is dangerous
+
+11. Current Status
+
+✅ Roles clarified
+
+✅ Boundaries locked
+
+✅ Neuronet-first decision made
+
+✅ Publisher identified as keystone
+
+✅ Agency separation agreed
+
+Next logical steps (when resuming):
+
+Formal signal taxonomy
+
+Perspective Report schema finalization
+
+Agency gate matrix
+
+Mapping to APIs / DB tables
+
+Optional TOGAF viewpoint mapping

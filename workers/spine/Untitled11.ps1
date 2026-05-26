@@ -1,0 +1,1 @@
+﻿Get-Content C:\miratv_ingest\raw_store\logs\newman_series_details.log -Tail 200

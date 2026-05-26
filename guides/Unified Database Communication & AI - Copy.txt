@@ -1,0 +1,372 @@
+Unified Database Communication & AI Update Architecture
+
+Design Summary and Rationale
+
+1. Purpose of This Document
+
+This document formalizes the communication, ingestion, reporting, and AI-consumption architecture discussed in this conversation. It exists to:
+
+Prevent semantic drift (“telephone game” failures)
+
+Establish clear ownership of truth
+
+Enable safe, scalable AI consumption
+
+Provide a durable, extensible update model across multiple databases
+
+Reduce unnecessary runtime communication and coupling
+
+This is not a messaging system, pub/sub system, or conversational architecture.
+It is a structured availability and reflection model.
+
+2. Core Principles
+2.1 Truth Is Written Once
+
+Facts are written exactly once by an authoritative writer
+
+Truth is never paraphrased, summarized, or retold as truth
+
+Interpretation is always secondary and explicitly labeled
+
+2.2 Evidence Over Meaning
+
+Databases store evidence (events, state, outcomes)
+
+Meaning is derived at query time, never stored as canonical truth
+
+AI never overwrites or replaces evidence
+
+2.3 Communication Without Conversation
+
+Components do not talk to each other
+
+Components publish facts
+
+Other components observe facts later
+
+Feedback occurs as new facts, not replies
+
+3. Database Roles
+
+Each database is sovereign within its domain.
+
+Examples (illustrative, not exhaustive):
+
+Content DB
+Owns content existence, state, schema integrity
+
+Ops / Telemetry DB
+Owns events, continuity checks, failures, operational outcomes
+
+AI / Knowledge DB
+Owns advisory insights, hypotheses, institutional memory
+
+No database:
+
+Writes into another database’s truth tables
+
+Infers intent from foreign data
+
+Rewrites another database’s outputs
+
+4. Ingestion Model
+4.1 Clients Do Not Write Truth
+
+Clients:
+
+Upload artifacts (files, payloads)
+
+Never stream directly into authoritative tables
+
+Never write state or outcomes
+
+4.2 Admission Boundary (Server-Side)
+
+Artifacts pass through a controlled server boundary where:
+
+Manifests are validated
+
+Structural checks occur (shape, required tags)
+
+No semantic validation is performed
+
+If validation fails:
+
+Artifact is quarantined (terminal)
+
+If validation succeeds:
+
+Artifact is admitted
+
+Server-controlled streaming into DB may occur
+
+4.3 Grinder Role (Minimal and Correct)
+
+The grinder:
+
+Orchestrates when ingestion occurs
+
+Enforces ordering, locks, and atomicity
+
+Records outcomes and events
+
+The grinder does not:
+
+Infer intent
+
+Interpret meaning
+
+Reconstruct narratives
+
+5. Reporting Model (The Central Design)
+5.1 Canonical Report Envelope (Identical Everywhere)
+
+Every database emits the same report structure, on a schedule.
+
+{
+  "report_id": "uuid",
+  "source_db": "content | ops | telemetry | ai",
+  "report_type": "scheduled_update",
+  "time_window": {
+    "from": "ISO-8601",
+    "to": "ISO-8601"
+  },
+  "generated_at": "ISO-8601",
+
+  "nodes": {
+    "state_summary": null,
+    "event_metrics": null,
+    "continuity_findings": null,
+    "resolution_updates": null,
+    "schema_drift": null,
+    "volume_stats": null,
+    "anomaly_flags": null,
+    "advisory_insights": null
+  },
+
+  "signature": {
+    "schema_version": "1.x",
+    "checksum": "sha256"
+  }
+}
+
+
+This envelope:
+
+Is immutable in structure
+
+Evolves only by adding new nodes
+
+Is enforced via schema validation
+
+6. Nodes: Ownership and Repetition
+6.1 Repeated Structure Is Intentional
+
+The same node set appears in every report
+
+Nodes are repeated structurally, not semantically
+
+Empty (null) nodes are expected and correct
+
+6.2 Exclusive Node Ownership
+
+Each node has exactly one owner DB.
+
+Example:
+
+Node	Owner DB
+state_summary	Content DB
+event_metrics	Ops DB
+continuity_findings	Ops DB
+resolution_updates	Ops DB
+schema_drift	Content DB
+volume_stats	Telemetry DB
+anomaly_flags	Telemetry DB
+advisory_insights	AI DB
+
+Rules:
+
+Only the owning DB may populate the node
+
+No DB validates or edits foreign nodes
+
+If two DBs want similar data → create a new node
+
+7. Node Payload Rules
+
+Node payloads must be:
+
+Structured
+
+Bounded
+
+Deterministic
+
+Evidence-referenced
+
+They must not contain:
+
+Free-form narrative
+
+Intent
+
+Recommendations
+
+Cross-domain conclusions
+
+Example (valid):
+
+{
+  "failed_ingests": 12,
+  "missing_artwork_rate": 0.18,
+  "evidence_refs": ["event_91823"]
+}
+
+8. Consumption Model (No Subscriptions)
+8.1 No Pub/Sub
+
+There is:
+
+No subscription registry
+
+No delivery guarantees
+
+No event fan-out
+
+8.2 Deliberate Querying
+
+Each DB and AI module is programmed with:
+
+Which nodes it reads
+
+From which source DBs
+
+How to ingest those nodes
+
+They do not:
+
+Explore reports
+
+Discover new nodes dynamically
+
+React to data they were not designed to read
+
+This is static, intentional consumption.
+
+9. AI Consumption Modes
+
+AI is not a single thing. Each AI component declares one ingestion mode.
+
+9.1 State AI
+
+Reads current DB state
+
+Ignores reports entirely
+
+Example: search, retrieval, UX helpers
+
+9.2 Historical / Learning AI
+
+Reads event logs and ledgers
+
+Ignores reports entirely
+
+Example: ML training, drift detection
+
+9.3 Reflective / Reasoning AI (Neuronet)
+
+Reads scheduled reports (nodes)
+
+Correlates across domains
+
+Produces advisory output only
+
+AI:
+
+Never writes authoritative truth
+
+Never resolves state
+
+Never closes obligations
+
+10. Continuity & Conversation Handling
+10.1 Continuity Is Structural
+
+Continuity checks validate:
+
+Ordering
+
+Completeness
+
+Valid state transitions
+
+They do not:
+
+Infer meaning
+
+Fill gaps
+
+Repair history
+
+10.2 Conversation Termination vs Resolution
+
+Conversations may be finite, long-running, or never-ending
+
+Conversations do not resolve
+
+Subjects resolve
+
+Resolution is tracked via a resolution ledger, not summaries.
+
+Example:
+
+subject: ingest_job_1192
+resolution_status: completed
+closed_at: timestamp
+evidence_refs: [...]
+
+11. Feedback Loop (Closed Without Chatter)
+
+The full loop:
+
+Fact is recorded
+
+Fact becomes observable
+
+Another system reacts later
+
+Reaction is recorded as a new fact
+
+Appears in the next report cycle
+
+Feedback is another fact, not agreement.
+
+12. Why This Architecture Works
+
+No semantic drift
+
+No AI hallucination of truth
+
+No cross-DB coupling
+
+Deterministic replay and backfill
+
+Extensible without breaking changes
+
+AI remains advisory and safe
+
+13. Final Anchors (Non-Negotiable Rules)
+
+Repeat structure to avoid repeating logic
+
+Truth is authoritative; meaning is provisional
+
+Blank nodes are discipline, not failure
+
+Databases publish; consumers query deliberately
+
+AI reflects; it never decides
+
+14. One-Sentence Summary
+
+All databases speak the same language, answer different questions, and never finish each other’s sentences.

@@ -1,0 +1,40 @@
+📺 MiraTV — Series Details Pipeline (New Chat Continuation)
+
+Status: PARTIALLY WORKING / BLOCKED AT JSON INGEST
+Goal: Fully automated Series → Series Info (Seasons/Episodes) ingest
+Constraint: Provider only responds correctly via Postman → Newman
+Non-Goal: Rewriting provider access logic in PowerShell (does not work)
+
+1️⃣ Canonical Architecture (Locked Mental Model)
+[SCHEDULER]
+   ↓
+[Newman runs Postman Collections]
+   ↓
+[Provider JSON payloads generated locally]
+   ↓
+[Payload files written to disk]
+   ↓
+[Wrapper uploads payload → PHP ingest endpoint]
+   ↓
+[DB ingests, validates, flags]
+   ↓
+[Scheduler loops forever]
+
+
+Key Rule:
+👉 Newman is ONLY for producing provider payload files
+👉 PHP ingest scripts are ONLY for DB writes
+👉 DB decides what is “next” — not Postman
+
+2️⃣ What Works (Confirmed)
+✅ Provider endpoints
+
+get_series → works
+
+get_series_info&series_id=### → works ONLY via Postman/Newman
+
+Direct PowerShell calls to provider → ❌ unreliable / abandoned
+
+✅ Newman execution
+
+Newman does execute collections

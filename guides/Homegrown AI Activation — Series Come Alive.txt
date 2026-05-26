@@ -1,0 +1,296 @@
+Homegrown AI Activation — Series Completion & Grinder Integration
+
+Status: Active Design → Execution
+Purpose: Establish a living AI loop that improves the system while preserving perspective, governance, and cost discipline.
+
+1. Core Principle
+
+Homegrown AI is not a model.
+Homegrown AI is a loop.
+
+The system becomes “alive” when a governed loop:
+
+runs continuously or opportunistically
+
+operates on real system artifacts
+
+improves completeness and structure over time
+
+respects authority boundaries
+
+preserves uncertainty (perspective)
+
+2. Perspective (Foundational Concept)
+
+Perspective = the ability to hold uncertainty across time without collapsing it into certainty.
+
+This is enforced through:
+
+Provisional rule status
+
+Confidence thresholds
+
+Trend-based validation (usage over time)
+
+Explicit canonization (never automatic)
+
+Without provisional status, perspective cannot exist.
+
+3. Governance Model (Finalized for Build Phase)
+Rule States
+discovered → provisional → canon → deprecated
+
+Authority Rules
+
+Only canon rules may block or halt
+
+Provisional rules may inform but never determine outcomes
+
+AI may propose rules, never promote or enforce them
+
+Chats and parameter docs are legislative history, not law
+
+Canon Boundary
+
+Only rules explicitly present and active in igm_rules are authoritative.
+
+4. Provisional Confidence Thresholds
+
+Provisional rules accrue confidence through successful, non-friction usage.
+
+Metrics
+
+encounters
+
+supports
+
+overrides
+
+confidence = supports / encounters
+
+Guidance Thresholds
+
+< 40% → likely eliminate
+
+40–70% → remain provisional
+
+> 70% → candidate for canon
+
+> 90% sustained → constitutional-level stability
+
+No automatic promotion. Ever.
+
+5. The First Living Loop: Series Completion Loop (SCL)
+Objective
+
+Incrementally complete series metadata while:
+
+minimizing cost
+
+maximizing reuse of existing data
+
+improving ingestion logic
+
+preserving unknowns
+
+This loop runs in the background while app development continues.
+
+6. Grinder-First Progressive Enrichment (GFPE) — Canon Strategy
+Key Insight
+
+If a file is still in the grinder, it is not a DB problem.
+
+Grinder = local truth-in-progress
+
+DB = authoritative curated state
+
+AI operates locally on grinder artifacts
+
+DB only receives shaped, final updates
+
+7. GFPE Pipeline (Authoritative)
+Phase 0 — Reality Check
+
+Identify grinder failures, quarantined files, partial parses
+
+No AI, no DB writes
+
+Phase 1 — Grinder Salvage (Primary Path)
+
+AI inspects raw local payloads
+
+Explains grinder failure
+
+Extracts data already present
+
+Proposes grinder parsing fixes
+
+No invention, extraction only
+
+Phase 2 — Internal Source-of-Truth Enrichment
+
+Use existing series patterns
+
+Vector similarity for guidance only
+
+Provisional inference allowed
+
+Still no external calls
+
+Phase 3 — Targeted External Lookup (Last Resort)
+
+Surgical, field-specific
+
+Only after local + internal exhaustion
+
+Phase 4 — Acceptance
+
+Partial knowledge is valid
+
+Unknown remains unknown
+
+No forced completeness
+
+8. AI ↔ DB Boundary (Hard Rule)
+AI (Local Only)
+
+Reads:
+
+grinder payloads
+
+logs
+
+schema introspection results
+
+Produces:
+
+grinder fix suggestions
+
+structured DB update instructions
+
+escalation reasons
+
+DB (Remote / Server Only)
+
+Accepts:
+
+explicit INSERT / UPDATE
+
+Enforces:
+
+constraints
+
+keys
+
+provenance
+
+Never sees:
+
+raw failed payloads
+
+half-parsed data
+
+speculative structures
+
+9. AI Output Contract (Non-JSON Process)
+
+AI must output one of the following:
+
+Option A — SQL (Parameterized)
+UPDATE series_details
+SET plot = ?, genre = ?
+WHERE series_id = ?;
+
+Option B — Structured Instruction
+TABLE: series_details
+KEY: series_id = 12345
+
+SET:
+  plot = "..."
+  genre = "..."
+
+CONFIDENCE:
+  plot: 0.82
+  genre: 0.76
+
+SOURCE:
+  grinder:file_abc.json
+
+
+JSON may exist as a file/container,
+JSON must never be a validation or control process.
+
+10. Grinder + AI Integration Point
+
+AI plugs in only at grinder failure boundaries.
+
+Grinder Phases
+Acquire → Normalize → Persist
+
+
+AI activates when:
+
+Normalize fails
+
+Expected structure not met
+
+Parse errors occur
+
+AI does not bypass the grinder — it improves it.
+
+11. Current Execution State
+
+Series Completion Loop selected as first living loop
+
+Grinder-first strategy locked
+
+Local AI boundary confirmed
+
+DB schema scanned and authoritative
+
+Current focus: grinder failing entry #7
+
+12. Immediate Next Action (Execution)
+
+Reopen grinder at failing entry #7
+
+For that entry:
+
+Freeze raw payload (local)
+
+Inspect failure reason
+
+Run AI diagnostic locally
+
+Produce:
+
+grinder fix OR
+
+DB update instruction OR
+
+escalation reason
+
+No DB writes until step 4 is validated.
+
+13. Operating Incantation (Use This)
+
+“We are in Governed Development Loop.
+The active loop is Series Completion via Grinder-First Enrichment.
+Analyze the failing grinder entry and produce a concrete artifact.”
+
+14. Final Invariant
+
+Governance orients the system.
+Perspective preserves learning.
+The grinder does the work.
+AI explains, extracts, and improves.
+
+If you want next, I can:
+
+compress this further into a 1-page executive version
+
+split it into Architecture / Governance / Execution sections
+
+or help you append this cleanly into your existing parameters doc
+
+Just say the word — and next time, I promise, no “50 First Dates” 😄

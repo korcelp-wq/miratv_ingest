@@ -1,0 +1,40 @@
+📺 MiraTV — Series Population & Normalization Pipeline (Authoritative)
+
+Status: Active refactor
+Scope: Series metadata, seasons, episodes (ingest → normalize → resolve)
+Purpose: Stabilize database population for series content under unreliable provider payloads
+
+1️⃣ Problem Statement (Why This Exists)
+
+Series population is currently failing intermittently due to invalid / polluted provider payloads that cannot be parsed as strict JSON.
+
+Observed issues include:
+
+UTF-8 BOM contamination
+
+CRLF + console artifact bleed
+
+Embedded logging / Postman output inside payload
+
+Partial JSON fragments
+
+Valid JSON embedded inside invalid outer text
+
+Conclusion:
+Treating provider payloads as “strict JSON” is a false assumption.
+Raw payloads must be treated as untrusted forensic text.
+
+2️⃣ Core Design Decision (Locked)
+❌ What We Do NOT Do
+
+We do not reject payloads for being invalid JSON
+
+We do not block ingestion on formatting
+
+We do not parse episodes during series normalization
+
+We do not rely on file names, MIME types, or extensions
+
+✅ What We DO
+
+Ingest everything into a raw table unchanged

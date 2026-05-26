@@ -1,0 +1,94 @@
+﻿# upload_epg_chunks.ps1 - PowerShell script to upload EPG file in chunks
+param(
+    [string]$Token = "WYWIQAB5ICKL2VUW9PW98IYF2JMNF9XY",
+    [string]$Url = "https://miratv.club/_ingest/import_epg.php",
+    [string]$XmlFile = "C:\miraTV_ingest\export\epg.xml",
+    [int]$ChunkSize = 2097152  # 2MB chunks
+)
+
+$ErrorActionPreference = "Stop"
+
+# Check if file exists
+if (-not (Test-Path $XmlFile)) {
+    Write-Error "File not found: $XmlFile"
+    exit 1
+}
+
+# Get file size
+$fileInfo = Get-Item $XmlFile
+$totalSize = $fileInfo.Length
+$totalChunks = [math]::Ceiling($totalSize / $ChunkSize)
+
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "EPG Chunked Uploader" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "File: $XmlFile"
+Write-Host "Size: $totalSize bytes ($([math]::Round($totalSize/1MB, 2)) MB)"
+Write-Host "Chunk Size: $ChunkSize bytes ($([math]::Round($ChunkSize/1MB, 2)) MB)"
+Write-Host "Total Chunks: $totalChunks"
+Write-Host "URL: $Url"
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host ""
+
+# Open file for reading
+$fileStream = [System.IO.File]::OpenRead($XmlFile)
+
+try {
+    for ($chunk = 0; $chunk -lt $totalChunks; $chunk++) {
+        $isFirst = ($chunk -eq 0)
+        $isLast = ($chunk -eq ($totalChunks - 1))
+        
+        $offset = $chunk * $ChunkSize
+        $remaining = $totalSize - $offset
+        $currentChunkSize = [math]::Min($ChunkSize, $remaining)
+        
+        # Read chunk
+        $buffer = New-Object byte[] $currentChunkSize
+        $bytesRead = $fileStream.Read($buffer, 0, $currentChunkSize)
+        
+        if ($bytesRead -eq 0) { break }
+        
+        # Build URL with parameters
+        $chunkUrl = "${Url}?chunk=${chunk}&first=$(if($isFirst){'1'}else{'0'})&last=$(if($isLast){'1'}else{'0'})&token=${Token}"
+        
+        Write-Host "[$($chunk+1)/$totalChunks] Uploading chunk $chunk (size: $bytesRead bytes)..." -NoNewline
+        
+        # Upload chunk using Invoke-WebRequest (PowerShell native)
+        try {
+            $response = Invoke-WebRequest -Uri $chunkUrl `
+                -Method POST `
+                -Headers @{"X-Ingest-Token" = $Token} `
+                -ContentType "application/octet-stream" `
+                -Body $buffer `
+                -UseBasicParsing `
+                -TimeoutSec 60
+            
+            if ($response.StatusCode -eq 200) {
+                Write-Host " Done" -ForegroundColor Green
+                $response.Content | Write-Host
+            } else {
+                Write-Host " Failed (HTTP $($response.StatusCode))" -ForegroundColor Red
+                throw "Upload failed for chunk $chunk"
+            }
+        }
+        catch {
+            Write-Host " Failed" -ForegroundColor Red
+            Write-Host "Error: $_" -ForegroundColor Red
+            throw
+        }
+        
+        # Small delay between chunks
+        if (-not $isLast) {
+            Start-Sleep -Milliseconds 500
+        }
+    }
+}
+finally {
+    $fileStream.Close()
+    $fileStream.Dispose()
+}
+
+Write-Host ""
+Write-Host "========================================" -ForegroundColor Green
+Write-Host "Upload complete!" -ForegroundColor Green
+Write-Host "========================================" -ForegroundColor Green

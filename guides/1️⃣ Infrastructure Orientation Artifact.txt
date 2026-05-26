@@ -1,0 +1,365 @@
+1️⃣ Infrastructure Orientation (What You’ve Built)
+
+At a high level, this is a local ops execution node with clear separation of concerns:
+
+C:\MiraTV
+├── execution (bat, jobs, ps1)
+├── state & safety (state, ops_db)
+├── data artifacts (export, json, tmp, legacy_data)
+├── observability (logs)
+└── orchestration entrypoint (run.bat)
+
+
+That’s the right shape.
+
+🧱 Top-Level Directories — Intent
+/bat
+
+Role: Legacy / compatibility launchers
+
+Thin wrappers
+
+Likely predate OPS DB integration
+
+Still useful for:
+
+manual ops
+
+backward compatibility
+
+simple task scheduler hooks
+
+👉 These should increasingly call job wrappers, not raw scripts.
+
+/jobs
+
+Role: Canonical job orchestration layer
+This is the future-facing heart of the system.
+
+Subfolders already imply time semantics:
+
+daily/
+
+hourly/
+
+weekly/
+
+on_demand/
+
+series/
+
+👉 This maps perfectly to your scheduling doctrine.
+
+Inside /jobs you have:
+
+job wrappers (e.g., import_series.job.ps1)
+
+job logic scripts (some still mixed, but trending clean)
+
+This folder is where:
+
+OPS locking
+
+OPS state
+
+semantic events
+belong
+
+/ps1
+
+Role: Execution logic layer (what does the work)
+
+This is where the actual ingestion happens:
+
+import_epg_chunked.ps1
+
+import_live_channels.ps1
+
+series_details_worker.ps1
+
+etc.
+
+Key observation:
+
+These scripts are workers, not orchestrators.
+
+They should:
+
+assume they are called safely
+
+log to files
+
+exit with meaningful codes
+
+never care about locks or OPS state
+
+This separation is already emerging nicely.
+
+/ps1/lib
+
+Role: Shared execution infrastructure
+
+Currently:
+
+ops_db.ps1 ← ⭐ critical
+
+This is your:
+
+OPS control-plane adapter
+
+lock/state/event persistence layer
+
+This folder should remain:
+
+small
+
+boring
+
+stable
+
+No job-specific logic here.
+
+/export
+
+Role: Canonical outbound artifacts
+
+Contains:
+
+EPG
+
+series
+
+live/VOD catalogs
+
+These are products of jobs, not inputs.
+
+Think of this as:
+
+“What the system produces for others to consume.”
+
+Later:
+
+decoy cache generation
+
+API serving
+
+sync to CDN
+
+/json
+
+Role: Normalized provider snapshots
+
+Looks like:
+
+raw or semi-processed provider responses
+
+“latest known good” JSON
+
+This is:
+
+staging
+
+replayable
+
+diffable
+
+Important:
+These are inputs to jobs, not truth.
+
+/legacy_data
+
+Role: Cold storage / rollback safety
+
+This is a blast-radius buffer:
+
+known-good historical artifacts
+
+fallback material
+
+Good instinct keeping this isolated.
+
+/tmp
+
+Role: Ephemeral workspace
+
+Chunk files, intermediates, partials.
+
+Rules:
+
+safe to delete
+
+never authoritative
+
+jobs should tolerate cleanup at any time
+
+/state
+
+Role: Transitional safety mechanisms
+
+Right now:
+
+locks/ exists but empty
+
+This aligns with:
+
+your earlier file-lock fallback concept
+
+but DB locks are now primary
+
+Good to keep this folder:
+
+reserved
+
+mostly empty
+
+available for failover
+
+/logs
+
+Role: Human observability
+
+Split cleanly:
+
+logs/jobs/ → execution detail
+
+logs/scheduler/ → orchestration/meta
+
+These logs are:
+
+verbose
+
+disposable
+
+human-facing
+
+Not ML-facing. Not OPS-facing.
+
+2️⃣ Operational Flow (End-to-End)
+
+Here is the actual runtime story your system tells today:
+
+Task Scheduler / Operator
+        |
+        v
+    run.bat
+        |
+        v
+ job wrapper (.job.ps1)
+        |
+        |-- OPS DB: job_runs (START)
+        |-- OPS DB: job_locks (ACQUIRE)
+        |-- OPS DB: job_events (semantic)
+        |
+        v
+ legacy worker (.ps1)
+        |
+        |-- reads from /json, /tmp
+        |-- writes to /export
+        |-- logs to /logs/jobs
+        |
+        v
+ job wrapper resumes
+        |
+        |-- OPS DB: job_events (DONE / FAILED)
+        |-- OPS DB: job_runs (COMPLETE)
+        |-- OPS DB: job_locks (RELEASE)
+
+
+Key insight:
+Nothing downstream can break OPS.
+Nothing upstream bypasses OPS.
+
+That’s exactly what you wanted.
+
+3️⃣ Architecture Diagram (Future Artifact)
+
+This is a clean, presentable diagram you can later redraw in:
+
+draw.io
+
+Archi
+
+PowerPoint
+
+TOGAF repository
+
+README / runbook
+
+📐 MiraTV OPS Execution Architecture
+                ┌─────────────────────────┐
+                │   Windows Task Scheduler │
+                │    / Manual Invocation  │
+                └────────────┬────────────┘
+                             │
+                             v
+                        ┌─────────┐
+                        │ run.bat │
+                        └────┬────┘
+                             │
+                             v
+        ┌────────────────────────────────┐
+        │          JOB WRAPPER (.job.ps1)          │
+        │------------------------------------------│
+        │ • Start job_run                          │
+        │ • Acquire DB lock                        │
+        │ • Emit semantic job_events               │
+        │ • Enforce SAFE / RISKY policy            │
+        └────────────┬───────────────┬───┘
+                     │               │
+                     │               v
+                     │        ┌───────── ──┐
+                     │        │ OPS DATABASE  │
+                     │        │ xpdgxfsp_ops  │
+                     │        │---------------│
+                     │        │ job_runs      │
+                     │        │ job_locks     │
+                     │        │ job_events    │
+                     │        │ job_failures  │
+                     │        │ checkpoints   │
+                     │        └────────── ─┘
+                     │
+                     v
+        ┌─────────────────────────────────┐
+        │        LEGACY / WORKER SCRIPTS           │
+        │------------------------------------------│
+        │ import_* .ps1                            │
+        │ series_details_worker.ps1                │
+        │------------------------------------------│
+        │ • Reads /json, /legacy_data, /tmp        │
+        │ • Writes /export                         │
+        │ • Logs to /logs/jobs                     │
+        └────────────┬────────────────────┘
+                     │
+                     v
+              ┌────────────┐
+              │ DATA ARTIFACTS│
+              │---------------│
+              │ /export       │
+              │ /json         │
+              │ /legacy_data  │
+              │ /tmp          │
+              └────────────┘
+
+4️⃣ Why This Is a Strong Future Artifact
+
+This structure clearly shows:
+
+Control Plane vs Data Plane
+
+OPS isolation
+
+Deterministic execution
+
+Human vs machine observability boundaries
+
+Where LLM / META export would later tap in (from OPS DB, not logs)
+
+It will translate cleanly into:
+
+TOGAF Phase C/D artifacts
+
+an ops runbook
+
+onboarding documentation
+
+a governance appendix

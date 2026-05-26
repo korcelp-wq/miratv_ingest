@@ -1,0 +1,245 @@
+📺 MiraTV Series Ingest Pipeline — Canonical State (Handoff)
+
+Status: WORKING (with known open items)
+Purpose: Reset context for new chat and continue development without re-debugging past ground
+Design Philosophy: Accommodation & appeasement of hostile provider data
+
+1️⃣ Core Principles (LOCKED)
+
+RAW data is hostile
+
+Never trust structure
+
+Never assume valid JSON
+
+Never block the pipeline
+
+Routing is permissive
+
+Grinding is strategy-specific
+
+Unmappable ≠ failure (only quarantine for later analysis)
+
+JSON is not a system structure — it is only a temporary island extracted from hostile text when useful.
+
+2️⃣ Canonical Pipeline Flow (Current)
+[0] Provider Fetch (Newman stdout)
+        ↓
+[1] RAW CAPTURE (verbatim text)
+        ↓
+[2.5] RAW ROUTER (TEXT-ONLY, NO JSON)
+        ↓
+ ┌───────────────┬───────────────┐
+ │ default       │ arrays        │
+ │ (legacy)      │ (Xtream maps) │
+ └───────────────┴───────────────┘
+        ↓                   ↓
+[3] series_grinder.ps1   [3.5] series_grinder_arrays.ps1
+        ↓                   ↓
+[4] series_sep (canonical ingest files)
+
+
+Pipeline must always advance, even when individual series are quarantined.
+
+3️⃣ Directory Layout (CANONICAL)
+C:\miratv_ingest\
+│
+├── raw_store\
+│   ├── series_*.raw.json        # raw stdout capture (TEXT)
+│   ├── pickup\
+│   │   ├── default\
+│   │   ├── arrays\
+│   │   └── quarantine\
+│   ├── normalized\              # text-normalized (still hostile)
+│   └── logs\
+│
+├── workers\
+│   ├── series_grinder.ps1           # legacy grinder (DO NOT MODIFY)
+│   ├── series_grinder_arrays.ps1    # array/Xtream grinder
+│   ├── raw_local_normalizer.ps1     # TEXT-ONLY normalizer
+│   └── raw_router.ps1               # router worker
+│
+├── triggers\
+│   ├── 0series_pipeline_trigger.ps1
+│   ├── 2raw_capture_trigger.ps1
+│   ├── 2_5_raw_router_trigger.ps1
+│   ├── 2ingest_master_trigger.ps1
+│   └── 3_5_series_grinder_arrays_trigger.ps1
+│
+├── series_sep\                   # final consumable outputs
+└── archive\ / failed\            # non-blocking storage
+
+4️⃣ RAW Router (TEXT-ONLY)
+
+File: raw_router.ps1
+Rules:
+
+MUST NOT parse JSON
+
+MUST NOT throw
+
+MUST NOT block pipeline
+
+MUST route entire file
+
+Uses regex + loose text heuristics only
+
+Current Routing Logic (Working)
+
+arrays/
+
+Xtream episode maps:
+
+"episodes": { "1": [ ... ] }
+
+
+default/
+
+Known legacy shapes
+
+quarantine/
+
+Only if literally no episode semantics exist
+
+Router behavior is intentionally permissive.
+False positives are acceptable. False quarantines are not.
+
+5️⃣ Grinders (Important Distinction)
+✅ series_grinder.ps1 (LEGACY)
+
+Processes default pickup
+
+Uses JSON extraction
+
+DO NOT MODIFY
+
+Confirmed working for series_1.raw.json
+
+🆕 series_grinder_arrays.ps1 (ARRAY / XTREAM)
+
+Processes arrays pickup
+
+MUST NOT rely on:
+
+first {
+
+last }
+
+brace counting across entire file
+
+Key Fix Implemented / Needed
+
+Anchor-based extraction, not brace-based.
+
+Anchor examples:
+
+"info"
+
+"episodes"
+
+"seasons"
+
+Extraction strategy:
+
+Find anchor
+
+Walk backward to nearest {
+
+Balance braces from that point only
+
+Extract JSON island
+
+ConvertFrom-Json (best effort)
+
+This accommodates:
+
+huge arrays
+
+unicode
+
+ANSI noise
+
+Newman verbosity
+
+provider quirks
+
+6️⃣ Raw Local Normalizer (TEXT-ONLY)
+
+File: raw_local_normalizer.ps1
+
+Purpose:
+
+Remove ANSI
+
+Remove terminal gutter characters
+
+Normalize whitespace
+
+Trim noise before first {
+
+Trim noise after last }
+
+⚠️ Does NOT validate JSON
+⚠️ Does NOT parse
+⚠️ Output is still hostile text
+
+7️⃣ Current Known State
+✅ Confirmed Working
+
+Router correctly separates series_1 and series_2
+
+series_1 → default → legacy grinder → success
+
+Pipeline continues even on partial failures
+
+🔧 In Progress / Needs Finalization
+
+Array grinder JSON island extraction
+
+Removing all global brace-balance assumptions
+
+Ensuring array grinder never blocks pipeline (quarantine instead)
+
+8️⃣ Design Constraints for Future AI Integration
+
+This pipeline is intentionally AI-friendly.
+
+Planned capabilities:
+
+AI-assisted grinder generation
+
+Router extension via new adapters
+
+Payload shape learning
+
+Non-blocking quarantine review
+
+Self-testing grinder suggestions
+
+AI operates in a bounded surface:
+
+Suggest → demo → approve → implement
+
+Never hot-writes production without review
+
+9️⃣ Rules for the Next Chat
+
+When continuing this work:
+
+❌ Do NOT “fix” legacy grinder
+
+❌ Do NOT enforce strict JSON validity
+
+❌ Do NOT tighten router rules
+
+✅ Assume hostile input
+
+✅ Prefer heuristics over correctness
+
+✅ Pipeline continuity > data purity
+
+10️⃣ Next Immediate Task (for new chat)
+
+🎯 Finalize series_grinder_arrays.ps1 extraction so series_2.raw.json fully processes
+
+Everything else is aligned.

@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head><title>CVI Test</title></head>
+<body>
+    <h1>CVI Test</h1>
+    <button onclick="testCVI()">Test CVI</button>
+    <pre id="result">Click button to test</pre>
+
+    <script>
+    async function testCVI() {
+        const result = document.getElementById('result');
+        result.textContent = 'Testing...';
+        
+        try {
+            const response = await fetch('/cvi', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    db: 'xpdgxfsp_pcde_memory',
+                    sql: 'SELECT COUNT(*) as count FROM pcde_procedure_registry',
+                    params: []
+                })
+            });
+            
+            const data = await response.json();
+            result.textContent = JSON.stringify(data, null, 2);
+        } catch (error) {
+            result.textContent = 'Error: ' + error.message;
+        }
+    }
+    </script>
+</body>
+</html>

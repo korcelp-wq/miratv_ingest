@@ -1,0 +1,18 @@
+﻿{
+  "enabled": true,
+
+  "raw_ingest": {
+    "enabled": true,
+    "max_runs": 1
+  },
+
+  "normalize": {
+    "enabled": true,
+    "max_runs": 2
+  },
+
+  "episode_resolver": {
+    "enabled": true,
+    "max_runs": 5
+  }
+}

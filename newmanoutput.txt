@@ -1,0 +1,85 @@
+﻿node.exe : (node:19504) [DEP0176] DeprecationWarning: fs.F_OK is deprecated, use fs.constants.F_OK instead
+At C:\Users\Korce\AppData\Roaming\npm\newman.ps1:24 char:5
++     & "node$exe"  "$basedir/node_modules/newman/bin/newman.js" $args
++     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ((node:19504) [D...ts.F_OK instead:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+(Use `node --trace-deprecation ...` to show where the warning was created)
+newman
+
+My Collection
+
+Γûí data_ingest
+Γöö get_series_info
+  GET http://uxurwymd.eldervpn.xyz:8080/player_api.php?username=Marina2025&password=3KY586YR&action=get_series_info&series_id=1  
+  200 OK Γÿà 25.1s time Γÿà 325BΓåæ 94.67kBΓåô size Γÿà 7Γåæ 13Γåô headers Γÿà 0 cookies
+  Γöî Γåô application/json Γÿà text Γÿà json Γÿà utf8 Γÿà 94.26kB
+  Γöé {"seasons":[{"air_date":"2017-04-28","episode_count":1
+  Γöé 0,"id":86291,"name":"Volume 1","overview":"Students of
+  Γöé  color navigate the daily slights and slippery politic
+  Γöé s of life at an Ivy League college that's not nearly a
+  Γöé s \"post-racial\" as it thinks.","season_number":1,"co
+  Γöé ver":"https:\/\/image.tmdb.org\/t\/p\/w600_and_h900_be
+  Γöé stv2\/bJ7u40dCDQS3cbVvfElkhru9Eoy.jpg","cover_big":"ht
+  Γöé tps:\/\/image.tmdb.org\/t\/p\/w600_and_h900_bestv2\/bJ
+  Γöé 7u40dCDQS3cbVvfElkhru9Eoy.jpg"},{"air_date":"2018-05-0
+  Γöé 4","episode_count":10,"id":103337,"name":"Volume 2","o
+  Γöé verview":"Romantic dilemmas, a social media troll and 
+  Γöé big changes at Armstrong-Parker House push Sam, Lionel
+  Γöé  and friends to the breaking point.","season_number":2
+  Γöé ,"cover":"https:\/\/image.tmdb.org\/t\/p\/w600_and_h90
+  Γöé 0_bestv2\/3ttjzYwpOaIoFlk77eqhdOXX19v.jpg","cover_big"
+  Γöé :"https:\/\/image.tmdb.org\/t\/p\/w600_and_h900_bestv2
+  Γöé \/3ttjzYwpOaIoFlk77eqhdOXX19v.jpg"},{"air_date":"2019-
+  Γöé 08-02","episode_count":10,"id":126230,"name":"Season 3
+  Γöé ","overview":"","season_number":3,"cover":"https:\/\/i
+  Γöé mage.tmdb.org\/t\/p\/w600_and_h900_bestv2\/x2blJYK6DHk
+  Γöé WSyRRPSIbddm0bo0.jpg","cover_big":"https:\/\/image.tmd
+  Γöé b.org\/t\/p\/w600_and_h900_bestv2\/x2blJYK6DHkWSyRRPSI
+  Γöé bddm0bo0.jpg"}],"info":{"name":"EN| Dear White People"
+  Γöé ,"cover":"https:\/\/image.tmdb.org\/t\/p\/w600_and_h90
+  Γöé 0_bestv2\/t2zSkn9Cel4aBoxEzhjA3lqjmn4.jpg","plot":"At 
+  Γöé a predominantly white Ivy League college, a diverse gr
+  Γöé oup of students navigate various forms of racial and o
+  Γöé ther types of discrimination.","cast":"Ashley Blaine F
+  Γöé eatherson, Brandon P. Bell, Logan Browning, Antoinette
+  Γöé  Robertson, DeRon Horton","director":"","genre":"Comed
+  Γöé y, Drama","releaseDate":"2017-04-28","last_modified":"
+  Γöé 1725545292","rating":"6","rating_5based":3,"backdrop_p
+  Γöé ath":["https:\/\/image.tmdb.org\/t\/p\/w1280\/3mGoVhxE
+  Γöé jV1DXrCWqJ8OE3sG9ku.jpg"],"youtube_trailer":"oYKgHvPVA
+  Γöé CE","episode_run_time":"30","category_id":"1505"},"epi
+  Γöé sodes":{"1":[{"id":"876761","episode_num":1,"title":"S
+  Γöé 01E01","container_extension":"mp4","info":{"movie_imag
+  Γöé e":"http:\/\/wtv.la:900\/images\/sJRrAoyx5PX6VG4M5
+  Γöé (showing 2.05kB/94.26kB)
+  Γöö
+  prepare   wait   dns-lookup   tcp-handshake   transfer-start   download   process   total 
+  15ms      16ms   42ms         275ms           24.4s            301ms      10ms      25.1s 
+
+
+ΓöîΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö¼ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö¼ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÉ
+Γöé                         Γöé            executed Γöé             failed Γöé
+Γö£ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö╝ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö╝ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöñ
+Γöé              iterations Γöé                   1 Γöé                  0 Γöé
+Γö£ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö╝ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö╝ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöñ
+Γöé                requests Γöé                   1 Γöé                  0 Γöé
+Γö£ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö╝ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö╝ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöñ
+Γöé            test-scripts Γöé                   1 Γöé                  0 Γöé
+Γö£ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö╝ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö╝ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöñ
+Γöé      prerequest-scripts Γöé                   1 Γöé                  0 Γöé
+Γö£ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö╝ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö╝ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöñ
+Γöé              assertions Γöé                   0 Γöé                  0 Γöé
+Γö£ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö┤ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓö┤ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöñ
+Γöé total run duration: 25.3s                                          Γöé
+Γö£ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöñ
+Γöé total data received: 94.26kB (approx)                              Γöé
+Γö£ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöñ
+Γöé average response time: 25.1s [min: 25.1s, max: 25.1s, s.d.: 0┬╡s]   Γöé
+Γö£ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöñ
+Γöé average DNS lookup time: 42ms [min: 42ms, max: 42ms, s.d.: 0┬╡s]    Γöé
+Γö£ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöñ
+Γöé average first byte time: 24.4s [min: 24.4s, max: 24.4s, s.d.: 0┬╡s] Γöé
+ΓööΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÿ
+

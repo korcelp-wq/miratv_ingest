@@ -1,0 +1,1 @@
+﻿curl.exe -X POST "https://miratv.club/_ingest/import_live_channels.php" -H "X-Ingest-Token: WYWIQAB5ICKL2VUW9PW98IYF2JMNF9XY" -H "Content-Type: application/json" --data-binary "@C:\miratv_ingest\export\live_channels_latest.json"

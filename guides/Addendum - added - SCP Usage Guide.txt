@@ -1,0 +1,154 @@
+📦 SCP Usage Guide (Windows / PowerShell — Authoritative)
+# SCP Usage Guide (Windows / PowerShell)
+
+**Purpose**  
+Securely copy files and directories between a local Windows machine and a remote server over SSH.
+
+**Authoritative Environment**
+- Windows 10 / 11
+- PowerShell
+- Git for Windows (bundled OpenSSH)
+- SCP binary provided by Git:
+  `C:\Program Files\Git\usr\bin\scp.exe`
+
+---
+
+## 1️⃣ Verify SCP Availability (PowerShell)
+
+```powershell
+Get-Command scp
+
+
+Expected
+
+Application  scp.exe  C:\Program Files\Git\usr\bin\scp.exe
+
+
+Notes
+
+scp -V is NOT supported in Git for Windows’ OpenSSH build
+
+Running scp with no arguments printing usage text confirms SCP is operational
+
+scp
+
+2️⃣ Canonical Syntax
+scp [options] source target
+
+3️⃣ Copy Scenarios
+3.1 Local → Remote (Single File)
+scp C:\path\to\file.txt user@host:/remote/path/
+
+
+Example
+
+scp activation_resolver.php korce@miratv.club:/home/korce/public_html/
+
+3.2 Remote → Local (Single File)
+scp user@host:/remote/path/file.txt C:\local\path\
+
+
+Example
+
+scp korce@miratv.club:/etc/hosts C:\temp\
+
+3.3 Copy a Directory (Recursive)
+scp -r C:\local\folder user@host:/remote/path/
+
+
+Example
+
+scp -r api korce@miratv.club:/home/korce/public_html/
+
+4️⃣ Common Options
+Option	Purpose
+-r	Copy directories recursively
+-i	Specify SSH private key
+-P	Specify SSH port (uppercase P)
+-v	Verbose output (debugging)
+4.1 Using an SSH Key
+scp -i C:\Users\Korce\.ssh\id_rsa file.txt user@host:/path/
+
+4.2 Using a Non-Standard SSH Port
+scp -P 2222 file.txt user@host:/path/
+
+4.3 Verbose / Debug Mode
+scp -v file.txt user@host:/path/
+
+5️⃣ PowerShell Execution Rules (IMPORTANT)
+
+scp is a native executable, not a PowerShell cmdlet
+
+where scp is unreliable in PowerShell
+
+Use PowerShell-native resolution instead:
+
+Get-Command scp
+
+
+If invoking via absolute path, use the call operator:
+
+& "C:\Program Files\Git\usr\bin\scp.exe" source target
+
+6️⃣ Authentication Behavior
+
+SCP uses SSH
+
+On first connection, host fingerprint confirmation may be required
+
+Supported authentication:
+
+Password
+
+SSH key (recommended)
+
+7️⃣ Typical Errors & Meaning
+Message	Meaning
+usage: scp ...	SCP executed correctly, missing arguments
+Permission denied	SSH authentication or file permission issue
+No such file or directory	Incorrect path
+Connection refused	SSH unreachable or wrong port
+8️⃣ Recommended Next Step (Optional)
+
+Configure SSH keys to eliminate password prompts:
+
+ssh-keygen
+ssh-copy-id user@host
+
+
+(Manual key installation may be required on some hosts.)
+
+9️⃣ Example Deployment Flow
+scp -r public_html korce@miratv.club:/home/korce/
+ssh korce@miratv.club "chmod -R 755 /home/korce/public_html"
+
+🔒 Summary (Locked)
+
+SCP is confirmed operational via Git for Windows
+
+Works in PowerShell, scripts, and automation
+
+Suitable for deployments, backups, and CI workflows
+
+Get-Command scp is the authoritative validation method
+
+
+---
+
+## ✅ What this gives you
+
+- Drop-in replacement for your current SCP section
+- Matches the **“LOCKED / SOURCE OF TRUTH”** tone of your doc :contentReference[oaicite:0]{index=0}
+- No ambiguity about PowerShell vs CMD
+- No misleading flags or checks
+- Ready for reuse in:
+  - MiraTV deployment docs
+  - New chat bootstraps
+  - Automation / ops notes
+
+If you want next:
+- I can **merge this cleanly into the full parameters document**
+- Or add a **Task Scheduler / `.bat` SCP automation appendix**
+- Or produce a **Linux ↔ Windows SCP parity section**
+
+Just tell me which direction you want to take it.

@@ -1,0 +1,175 @@
+# OpenAI API – Usage, Cost, and Parameters
+
+This document defines how OpenAI API access, cost control, and safety limits are configured and integrated into the **Master Parameters** system.
+
+It is designed to be:
+- Deterministic
+- Auditable
+- Cost-capped
+- Safe for automation pipelines (ingest, grind, classify)
+
+---
+
+## 1. Billing Model (Plain English)
+
+OpenAI API is **pay-as-you-go** and charges only for **tokens processed**.
+
+You are billed for:
+- **Input tokens** (what you send)
+- **Output tokens** (what the model returns)
+
+You are **not** billed for:
+- Number of API keys
+- Idle time
+- Workers or scripts
+- ChatGPT Plus subscription
+
+---
+
+## 2. Cost Reality (Planning Numbers)
+
+Use these numbers for planning and guardrails:
+
+| Item | Approx Cost |
+|----|----|
+| Input tokens | ~$0.001 / 1,000 tokens |
+| Output tokens | ~$0.002 / 1,000 tokens |
+
+> 1,000 tokens ≈ 750 words ≈ 1–1.5 pages of text
+
+---
+
+## 3. Typical MiraTV AI Call Cost
+
+**Example: Metadata classification**
+
+- Input: ~2,500 tokens (dirty JSON + instruction)
+- Output: ~250 tokens (strict JSON)
+
+**Estimated cost per call:**
+~$0.003 (three-tenths of one cent)
+
+yaml
+Copy code
+
+---
+
+## 4. Monthly Cost Scenarios
+
+| Usage | Calls / Month | Estimated Cost |
+|----|----|----|
+| Conservative | 2,000 | ~$6 |
+| Moderate | 10,000 | ~$30 |
+| Heavy ingest | 50,000 | ~$150 |
+
+> Costs remain flat if token limits and batching rules are followed.
+
+---
+
+## 5. Required Billing Safeguards
+
+These **must** be configured in OpenAI billing:
+
+- **Soft limit:** $20 (email warning)
+- **Hard limit:** $40 (API stops completely)
+
+This ensures runaway jobs fail safely.
+
+---
+
+## 6. Master Parameters – AI Section
+
+Add the following block to **master_parameters.yaml** (or equivalent):
+
+```yaml
+ai:
+  enabled: true
+
+  provider: openai
+
+  api:
+    key_env: OPENAI_API_KEY
+    timeout_seconds: 30
+
+  models:
+    default: gpt-small
+    classification: gpt-small
+    anomaly: gpt-small
+
+  limits:
+    max_input_tokens: 4000
+    max_output_tokens: 300
+    max_cost_per_call_usd: 0.01
+
+  billing:
+    soft_limit_usd: 20
+    hard_limit_usd: 40
+
+  behavior:
+    response_format: json_only
+    allow_explanations: false
+    allow_mutation: false
+
+  logging:
+    enabled: true
+    log_tokens: true
+    log_cost: true
+    log_model: true
+7. Enforcement Rules (Non-Negotiable)
+AI never mutates data directly
+
+AI responses must be valid JSON only
+
+Output tokens are hard-capped
+
+AI is called outside loops whenever possible
+
+All calls go through a single AI gateway
+
+8. Failure Behavior
+If any limit is exceeded:
+
+Call aborts
+
+Job is flagged
+
+Pipeline continues without AI enrichment
+
+No silent retries.
+
+9. Why This Exists
+This configuration ensures:
+
+Predictable cost
+
+Deterministic pipelines
+
+Easy auditing
+
+Future model swaps without refactoring
+
+AI is advisory, not authoritative.
+
+10. Status
+✅ Safe to enable in development
+✅ Safe to enable in ingest workers
+❌ Not permitted in uncontrolled loops
+
+Document owner: System Architecture
+Scope: AI / LLM Integration
+Revision: v1.0
+
+yaml
+Copy code
+
+---
+
+## Best Way to Use This (Recommended)
+1. Create a file:
+docs/architecture/ai/openai_cost_and_parameters.md
+
+yaml
+Copy code
+2. Paste the above content
+3. Commit it
+4. Reference it from your **Master Parameters index**

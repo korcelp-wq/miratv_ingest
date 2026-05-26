@@ -1,0 +1,251 @@
+📜 MiraTV — Canonical API Contract
+
+Status: LOCKED (v1)
+Role: DB → App Read Contract
+Scope: Android App + Future Clients (Web, TV, AI Agents)
+
+1️⃣ Core Principles (Non-Negotiable)
+
+Database is the authority
+
+Providers are ingest-only
+
+App never queries providers
+
+API is read-only for clients
+
+No writes
+
+No provider logic
+
+No mutation
+
+Provider-agnostic
+
+No Xtream / MegaOTT / custom flags
+
+IDs are internal only
+
+Stable contracts
+
+Schema changes = version bump
+
+No silent breaking changes
+
+2️⃣ API Structure (Top-Level)
+/api/v1/
+├── system/
+├── home/
+├── movies/
+├── series/
+├── live/
+├── search/
+├── playback/
+
+
+All responses:
+
+{
+  "status": "ok",
+  "data": { },
+  "meta": {
+    "page": 1,
+    "page_size": 20,
+    "total": 3124
+  }
+}
+
+
+Errors:
+
+{
+  "status": "error",
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "Series not found"
+  }
+}
+
+3️⃣ System Endpoints
+GET /api/v1/system/status
+
+Purpose: App health check
+
+{
+  "db": "online",
+  "content": "ready",
+  "version": "1.0.0"
+}
+
+4️⃣ Home (Dynamic Sections)
+GET /api/v1/home
+
+Returns curated rows driven entirely by DB flags.
+
+{
+  "sections": [
+    {
+      "id": "featured",
+      "title": "Featured",
+      "type": "mixed",
+      "items": [ ... ]
+    },
+    {
+      "id": "trending",
+      "title": "Trending Now",
+      "type": "movies",
+      "items": [ ... ]
+    }
+  ]
+}
+
+
+Each item:
+
+{
+  "content_id": 93421,
+  "content_type": "movie",
+  "title": "Example Title",
+  "poster": "https://cdn/...",
+  "backdrop": "https://cdn/...",
+  "year": 2024,
+  "rating": "TV-MA"
+}
+
+5️⃣ Movies
+GET /api/v1/movies
+
+Query params:
+
+genre
+
+year
+
+country
+
+page
+
+page_size
+
+{
+  "content_id": 1001,
+  "title": "Movie Name",
+  "duration": 6420,
+  "genres": ["Action","Drama"],
+  "poster": "...",
+  "backdrop": "...",
+  "language": "en"
+}
+
+GET /api/v1/movies/{content_id}
+
+Returns full movie detail.
+
+6️⃣ Series (Hierarchical, Clean)
+GET /api/v1/series
+
+Returns series list only (no episodes).
+
+{
+  "series_id": 2001,
+  "title": "Series Name",
+  "seasons": 4,
+  "poster": "...",
+  "backdrop": "...",
+  "status": "ongoing"
+}
+
+GET /api/v1/series/{series_id}
+{
+  "series_id": 2001,
+  "title": "Series Name",
+  "overview": "...",
+  "seasons": [
+    {
+      "season": 1,
+      "episode_count": 10
+    }
+  ]
+}
+
+GET /api/v1/series/{series_id}/season/{season}
+{
+  "episodes": [
+    {
+      "episode_id": 991,
+      "episode": 1,
+      "title": "Pilot",
+      "duration": 3600,
+      "thumbnail": "..."
+    }
+  ]
+}
+
+7️⃣ Live TV
+GET /api/v1/live
+{
+  "channel_id": 301,
+  "name": "Channel Name",
+  "logo": "...",
+  "category": "News",
+  "epg_now": {
+    "title": "Current Show",
+    "ends_at": "2026-01-27T14:00:00Z"
+  }
+}
+
+8️⃣ Search (Unified)
+GET /api/v1/search?q=term
+
+Returns mixed results:
+
+{
+  "movies": [ ... ],
+  "series": [ ... ],
+  "live": [ ... ]
+}
+
+9️⃣ Playback (Critical Boundary)
+GET /api/v1/playback/{content_type}/{id}
+
+Returns only what the player needs.
+
+{
+  "stream_url": "https://resolver/...",
+  "headers": {
+    "User-Agent": "MiraTV"
+  },
+  "drm": null,
+  "expires_at": "2026-01-27T14:30:00Z"
+}
+
+
+⚠️ App never:
+
+builds URLs
+
+touches provider credentials
+
+retries provider logic
+
+🔟 Versioning Rules
+
+/api/v1/ is immutable
+
+Breaking change → /api/v2/
+
+New optional fields allowed anytime
+
+1️⃣1️⃣ What This Enables (Strategic)
+
+Multiple providers simultaneously
+
+AI-driven curation
+
+Offline caching
+
+App reuse (TV, mobile, web)
+
+Sellable backend engine
+
+Zero provider lock-in

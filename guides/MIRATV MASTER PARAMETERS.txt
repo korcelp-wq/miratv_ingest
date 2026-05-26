@@ -1,0 +1,54 @@
+# === MIRATV MASTER PARAMETERS — SELF-ADJUSTING (D1/D3) ===
+# This file reflects the intended, locked behavior for MiraTV.
+
+[SERVER]
+XTREAM_BASE_URL = dynamic_per_user   # Provided by backend activation (or autodiscover if missing)
+USERNAME = dynamic_per_user          # Provided by backend activation
+PASSWORD = dynamic_per_user          # Provided by backend activation
+M3U_URL_TEMPLATE = {base}/get.php?username={user}&password={pass}&type=m3u&output=ts
+
+[DISCOVERY]
+RUN_MODE = D1+D3
+# D1: Run once immediately after activation; cache results in SessionManager
+# D3: Run again ONLY if playback fails; update session and retry once
+OVERRIDE_BACKEND_BASE = false        # Do not override backend base unless backend_base is null/blank
+TIMEOUT_MS_JSON = 6000
+TIMEOUT_MS_M3U  = 6000
+
+[LIVE]
+MODE = HYBRID_SIMPLE
+PRIMARY = M3U
+FALLBACK = JSON
+MERGE = false
+
+[CATEGORIES]
+SOURCE_PRIMARY = M3U
+SOURCE_FALLBACK = JSON
+MERGE = false
+GROUP_PRIORITY = group-title, json-name, fallback:"Live TV"
+
+[CHANNELS]
+SOURCE_PRIMARY = M3U
+SOURCE_FALLBACK = JSON
+MERGE = false
+
+[PLAYBACK]
+URL_PRIORITY = m3u-url, json-url-builder, autodiscover-once-then-retry
+RETRY_LIMIT = 1
+FORMAT_PRIORITY = ts, m3u8
+
+[UI_IDS]
+activity_categories.recycler = recycler
+activity_channels.recycler = recycler
+activity_player.player = playerView
+activity_player.spinner = progress
+item_category.title = title
+item_channel.title = title
+item_channel.icon = icon
+
+[NEVER_CHANGE]
+- Do not merge JSON + M3U categories or channels.
+- Do not run autodiscover inside Activities; use cached session decisions.
+- Activation must store base URL, username, password into SessionManager.
+- AutoDiscover runs only D1 (post-activation) and D3 (playback failure).
+- Keep snake_case model fields with @SerializedName where applicable.

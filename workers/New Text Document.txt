@@ -1,0 +1,43 @@
+﻿param(
+    [Parameter(Mandatory)]
+    [string]$InputFile,
+
+    [Parameter(Mandatory)]
+    [string]$OutputFile
+)
+
+$ErrorActionPreference = "Stop"
+
+Write-Host "🧼 LOCAL RAW NORMALIZER"
+Write-Host "▶ Input : $InputFile"
+Write-Host "▶ Output: $OutputFile"
+
+$payload = Get-Content $InputFile -Raw | ConvertFrom-Json
+
+# --- minimal normalization ---
+$norm = [ordered]@{}
+
+# Preserve info block if present
+if ($payload.info) {
+    $norm.info = $payload.info
+}
+
+# Normalize episodes
+if ($payload.episodes) {
+    $norm.episodes = $payload.episodes
+}
+elseif ($payload.seasons) {
+    $norm.seasons = $payload.seasons
+}
+
+# Preserve anything else for future AI / analysis
+$norm._raw_meta = @{
+    normalized_at = (Get-Date).ToString("s")
+    source_file   = (Split-Path $InputFile -Leaf)
+}
+
+$norm | ConvertTo-Json -Depth 10 |
+    Set-Content -Encoding UTF8 $OutputFile
+
+Write-Host "✅ Normalization complete"
+exit 0

@@ -1,0 +1,139 @@
+🔄 MiraTV Content Ingest — SCP Push Workflow (AUTHORITATIVE ADDENDUM)
+
+You can paste the following verbatim into the parameters document as a new subsection under the SCP guide.
+
+📦 MiraTV Series Ingest — SCP Push Workflow (Locked)
+
+Purpose
+Securely push a Postman-exported JSON catalog from a trusted PC to the MiraTV server for controlled database ingestion.
+
+This workflow is PUSH-based (PC → Server).
+The server never pulls data from providers.
+
+1️⃣ Source File (PC)
+
+File type
+
+.json
+
+
+Example filename
+
+series_latest.json
+
+
+Location on PC (example)
+
+C:\miratv_ingest\exports\series_latest.json
+
+
+Origin
+
+Exported from Postman Collection Runner
+
+Plain UTF-8 JSON text
+
+Human-readable
+
+NOT executable
+
+2️⃣ Destination Folder (Server)
+
+Path
+
+/home/xpdgxfsp/public_html/_ingest/
+
+
+This folder contains:
+
+import_series_json.php
+series_latest.json
+
+
+Directory is not browsed publicly and is used only for ingest.
+
+3️⃣ Atomic Upload Rule (MANDATORY)
+
+Uploads MUST follow a two-step atomic pattern to prevent partial reads.
+
+Step A — Upload as temporary file
+
+series_latest.json.tmp
+
+
+Step B — Rename after upload completes
+
+series_latest.json
+
+
+Linux mv is atomic and guarantees file integrity.
+
+4️⃣ SCP Command (Windows / PowerShell)
+
+Local → Remote (atomic upload)
+
+scp C:\miratv_ingest\exports\series_latest.json `
+    user@miratv.club:/home/xpdgxfsp/public_html/_ingest/series_latest.json.tmp
+
+
+Finalize upload (rename on server)
+
+ssh user@miratv.club `
+    "mv /home/xpdgxfsp/public_html/_ingest/series_latest.json.tmp /home/xpdgxfsp/public_html/_ingest/series_latest.json"
+
+
+Authentication uses standard SSH (password or key-based).
+
+5️⃣ Import Trigger (Token-Protected)
+
+After SCP completes, the importer is triggered via HTTPS.
+
+Header-based token (authoritative)
+
+curl -H "X-Ingest-Token: <INGEST_TOKEN>" `
+     https://miratv.club/_ingest/import_series_json.php
+
+
+The importer:
+
+reads series_latest.json
+
+inserts into MySQL
+
+performs no provider calls
+
+Requests without a valid token return 403 Forbidden.
+
+6️⃣ Direction of Flow (Invariant)
+PC (Postman / JSON)
+   ↓ SCP (push)
+Server (_ingest folder)
+   ↓ PHP importer
+MySQL database
+
+
+Server never pulls from PC
+
+Database never pulls files
+
+Provider credentials never reside server-side
+
+🔒 Security Notes (Locked)
+
+SCP uses SSH encryption
+
+Importer is token-gated
+
+JSON file is not executable
+
+Upload is atomic
+
+Process is auditable via logs
+
+This workflow is approved for:
+
+scheduled automation (Task Scheduler)
+
+incremental catalog updates
+
+future movies / live / EPG ingestion

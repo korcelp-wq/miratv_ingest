@@ -1,0 +1,109 @@
+# MiraTV Procedure Registry Rule Groups
+# Generated: 2026-02-03
+
+# Format:
+# [Group Name]
+#   - procedure_name: description
+
+[Activation]
+  - activate_device: Device activation via MAC address and code
+  - deactivate_device: Deactivation of device and revocation of access
+  - generate_activation_code: Generate new activation code for device binding
+  - expire_activation_code: Expire or revoke an existing activation code
+  - log_activation_event: Log activation or deactivation event
+  - update_account_profile: Update account profile information
+  - bind_mac_user: Bind MAC address to user account
+  - unbind_mac_user: Unbind MAC address from user account
+  - create_admin_user: Create new admin user account
+  - update_admin_user: Update admin user account details
+  - delete_admin_user: Delete admin user account
+
+[Content]
+  - refresh_epg: Refresh EPG guide data from provider XMLTV source
+  - import_series: Import and normalize series catalog from provider
+  - import_vod: Import and normalize VOD/movie catalog from provider
+  - import_live: Import and normalize live channel catalog from provider
+  - parse_series_seasons: Extract seasons from normalized series JSON
+  - parse_series_episodes: Extract episodes from normalized series JSON
+  - enrich_series_metadata: Enrich series metadata with posters and extended descriptions
+  - materialize_series_db: Prepare and insert series data into MySQL database
+  - materialize_vod_db: Prepare and insert VOD/movie data into MySQL database
+  - materialize_live_db: Prepare and insert live channel data into MySQL database
+  - sync_provider_catalog: Synchronize provider catalog with local state
+  - validate_epg_integrity: Validate EPG data integrity and completeness
+  - quarantine_invalid_series: Quarantine series records with parse or schema errors
+  - quarantine_invalid_vod: Quarantine VOD/movie records with parse or schema errors
+  - quarantine_invalid_live: Quarantine live channel records with parse or schema errors
+  - log_series_ingest_event: Log series ingest event
+  - log_vod_ingest_event: Log VOD ingest event
+  - log_live_ingest_event: Log live ingest event
+  - log_epg_ingest_event: Log EPG ingest event
+  - log_ingest_failure: Log ingest failure event
+  - log_ingest_success: Log ingest success event
+  - log_ingest_quarantine: Log ingest quarantine event
+  - log_ingest_retry: Log ingest retry event
+  - log_ingest_escalation: Log ingest escalation event
+  - log_ingest_completion: Log ingest completion event
+  - log_ingest_partial: Log ingest partial event
+  - log_ingest_delta: Log ingest delta event
+  - log_ingest_metric: Log ingest metric event
+  - log_ingest_telemetry: Log ingest telemetry event
+  - log_ingest_audit: Log ingest audit event
+  - log_ingest_attestation: Log ingest attestation event
+  - log_ingest_checkpoint: Log ingest checkpoint event
+  - log_ingest_lock: Log ingest lock event
+  - log_ingest_release: Log ingest release event
+  - log_ingest_schedule: Log ingest schedule event
+  - log_ingest_execute: Log ingest execute event
+  - log_ingest_finalize: Log ingest finalize event
+
+[Ops]
+  - backup_database: Perform scheduled MySQL database backup
+  - restore_database: Restore MySQL database from backup
+  - run_spine_scheduler: Run master scheduler for ingest and processing workers
+  - trigger_worker: Trigger a specific ingest or processing worker
+  - report_ops_capacity: Report operational capacity and job run statistics
+  - log_job_event: Log job event for operational tracking
+  - log_job_failure: Log job failure and error summary
+  - checkpoint_job: Checkpoint job progress for recovery
+  - acquire_job_lock: Acquire job lock for exclusive execution
+  - release_job_lock: Release job lock after execution
+  - schedule_job_run: Schedule a new job run
+  - execute_job_run: Execute a scheduled job run
+  - finalize_job_run: Finalize and record job run completion
+
+[Security]
+  - rotate_ingest_token: Rotate ingest token for secure content upload
+  - audit_device_activity: Audit device activation and access logs
+  - rotate_worker_token: Rotate worker token for AI or ingest workers
+  - audit_token_usage: Audit usage of ingest or worker tokens
+  - enforce_token_expiry: Enforce expiry policy for tokens
+
+[AI]
+  - log_ai_telemetry: Log AI decision telemetry and confidence scores
+  - index_ai_memory: Index AI memory and knowledge units
+  - compute_vector_drift: Compute semantic or statistical vector drift
+  - cluster_cohesion_metric: Compute cluster cohesion metric for knowledge base
+  - materialize_signal_spool: Materialize signal spool events to database
+  - query_signal_spool: Query real-time signal spool for attestation events
+  - escalate_ai_decision: Escalate AI decision for human review
+
+[Governance]
+  - report_callosum_alignment: Report cross-component coherence and alignment
+  - evaluate_governance_rule: Evaluate a governance rule against current state
+  - attest_rule_compliance: Attest compliance with governance rule
+  - propose_candidate_rule: Propose a new candidate governance rule
+  - promote_rule_to_canon: Promote a provisional rule to canon status
+  - deprecate_rule: Deprecate an existing governance rule
+  - archive_rule: Archive a deprecated governance rule
+  - log_governance_event: Log governance event for attestation
+  - log_attestation_ledger: Log attestation in governance ledger
+  - evaluate_rule_evidence: Evaluate evidence for rule compliance
+  - log_candidate_rule: Log candidate rule for review
+  - log_governance_example: Log governance example for training
+  - log_raw_governance_event: Log raw governance event
+  - log_cm_routine: Log callosum matrix routine
+  - log_cm_request: Log callosum matrix request
+  - log_cm_document: Log callosum matrix document
+  - log_cm_matrix_report: Log callosum matrix report
+  - sp_cm_execute_request: Execute callosum matrix request

@@ -1,0 +1,65 @@
+{
+  "info": {
+    "name": "MiraTV Series Pipeline",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Get Next Series (Pipeline Lock)",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-INGEST-TOKEN",
+            "value": "WYWIQAB5ICKL2VUW9PW98IYF2JMNF9XY"
+          }
+        ],
+        "url": {
+          "raw": "https://miratv.club/_workers/series_pipeline.php",
+          "protocol": "https",
+          "host": ["miratv","club"],
+          "path": ["_workers","series_pipeline.php"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "let r = pm.response.json();",
+              "",
+              "if (!r || !r.series_id || !r.provider_series_id) {",
+              "  throw new Error('Pipeline returned invalid payload');",
+              "}",
+              "",
+              "pm.environment.set('series_id', r.series_id);",
+              "pm.environment.set('provider_series_id', r.provider_series_id);",
+              "pm.environment.set('series_lock', r.lock);",
+              "",
+              "console.log('Locked series', r.series_id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Fetch Series Info (Xtream)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "http://uxurwymd.eldervpn.xyz:8080/player_api.php?username={{xtream_user}}&password={{xtream_pass}}&action=get_series_info&series_id={{provider_series_id}}",
+          "protocol": "http",
+          "host": ["uxurwymd","eldervpn","xyz"],
+          "port": "8080",
+          "path": ["player_api.php"],
+          "query": [
+            { "key": "username", "value": "{{xtream_user}}" },
+            { "key": "password", "value": "{{xtream_pass}}" },
+            { "key": "action", "value": "get_series_info" },
+            { "key": "series_id", "value": "{{provider_series_id}}" }
+          ]
+        }
+      }
+    }
+  ]
+}

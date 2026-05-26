@@ -1,0 +1,55 @@
+{
+  "telemetry": {
+    "enabled": true,
+    "mode": "external_watcher",
+    "endpoint": "https://miratv.club/_workers/telemetry/record.php",
+    "token": "WYWIQAB5ICKL2VUW9PW98IYF2JMNF9XY",
+    
+    "watch_targets": {
+      "job_trace_log": "c:\\miratv_ingest\\logs\\job_trace.log",
+      "igm_spool": "c:\\miratv_ingest\\igm_spool",
+      "lake_spool": "c:\\miratv_ingest\\lake_spool",
+      "ops_spool": "c:\\miratv_ingest\\ops_spool"
+    },
+    
+    "batch_monitors": [
+      {
+        "name": "master_runner2",
+        "watch_file": "c:\\miratv_ingest\\master_runner2.bat",
+        "track_execution": true,
+        "parse_output": true
+      },
+      {
+        "name": "master_runner_loop",
+        "watch_file": "c:\\miratv_ingest\\master_runner_loop.bat",
+        "track_execution": true,
+        "parse_output": true
+      },
+      {
+        "name": "MASTER_ACCESSORY",
+        "watch_file": "c:\\miratv_ingest\\MASTER_ACCESSORY.bat",
+        "track_execution": true,
+        "parse_output": true
+      }
+    ],
+    
+    "trigger_patterns": {
+      "directory": "c:\\miratv_ingest\\triggers",
+      "extensions": [".ps1", ".bat"],
+      "track_calls": true
+    },
+    
+    "worker_patterns": {
+      "directory": "c:\\miratv_ingest\\workers",
+      "extensions": [".ps1"],
+      "track_calls": true
+    },
+    
+    "output_patterns": {
+      "step_complete": "✅ STEP .* COMPLETE",
+      "step_start": "\\[STEP \\d+\\]",
+      "error": "errorlevel 1|goto FAIL|goto STOP",
+      "loop_iteration": "\\[LOOP\\]"
+    }
+  }
+}

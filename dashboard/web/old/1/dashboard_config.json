@@ -1,0 +1,44 @@
+{
+  "Port": 8787,
+  "RefreshSeconds": 5,
+  "LogDir": "C:\\miratv_ingest\\logs",
+  "RuntimeDir": "C:\\miratv_ingest\\runtime",
+  "BgcStatusFile": "C:\\MiraTV\\Modules\\IMG\\BGC\\runtime\\bgc_watcher_service.status.json",
+  "OllamaUrl": "http://localhost:11434",
+  "OllamaModel": "llama3.2:latest",
+  "CviGatewayUrl": "https://miratv.club/_workers/ai/cvi_gateway.php",
+  "CviTokenEnvName": "CVI_GATEWAY_TOKEN",
+  "CviChecks": [
+    {
+      "name": "Event Count: ai_telemetry",
+      "procedure": "sp_get_event_count_by_source",
+      "params": {
+        "source": "ai_telemetry",
+        "time_window_hours": 24
+      }
+    },
+    {
+      "name": "Recent Telemetry",
+      "procedure": "sp_get_recent_telemetry",
+      "params": {
+        "time_window_hours": 24,
+        "limit": 10
+      }
+    },
+    {
+      "name": "Job Run Counts",
+      "procedure": "sp_get_job_run_counts",
+      "params": {
+        "time_window_hours": 24
+      }
+    },
+    {
+      "name": "Recent Job Events",
+      "procedure": "sp_get_recent_job_events",
+      "params": {
+        "time_window_hours": 24,
+        "limit": 10
+      }
+    }
+  ]
+}
