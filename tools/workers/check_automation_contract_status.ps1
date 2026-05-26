@@ -1,4 +1,4 @@
-# MiraTV Automation Contract Status Checker
+﻿# MiraTV Automation Contract Status Checker
 # File: tools/workers/check_automation_contract_status.ps1
 # Purpose:
 #   Verifies automation units against the MiraTV Automation Implementation Contract.
@@ -272,7 +272,7 @@ try {
             Name = "check_cache_stale_serving"
             Path = "tools\workers\check_cache_stale_serving.ps1"
             Recurring = $true
-            RequiredSignals = @("cache_served_from", "stale_ratio_by_screen", "worker_heartbeat_status")
+            RequiredSignals = @("cache_stale_serving_status", "cache_stale_ratio", "worker_heartbeat_status")
             RequiredKillSwitch = "ENABLE_ASYNC_CACHE_REFRESH"
         },
         @{
@@ -496,3 +496,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
+
+
+

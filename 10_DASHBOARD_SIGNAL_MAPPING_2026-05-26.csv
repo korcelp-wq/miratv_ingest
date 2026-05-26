@@ -1,12 +1,12 @@
-signal_name,p0_item,source_component,dashboard_panel,widget_key,refresh_cadence,staleness_threshold,alert_threshold,owner,kill_switch_name,rollback_action,enabled
+﻿signal_name,p0_item,source_component,dashboard_panel,widget_key,refresh_cadence,staleness_threshold,alert_threshold,owner,kill_switch_name,rollback_action,enabled
 availability_refresh_status,P0.1,availability_worker,Availability,availability.refresh.status,10m,30m,status=failed|stale,IP Ops,ENABLE_AVAILABILITY_REFRESH,Disable worker and keep known-good availability by TTL,true
 availability_refresh_lag_minutes,P0.1,availability_worker,Availability,availability.refresh.lag_minutes,10m,30m,>30,IP Ops,ENABLE_AVAILABILITY_REFRESH,Disable worker and keep known-good availability by TTL,true
 worker_heartbeat_status,P0.2,worker_runtime,Worker Health,worker.heartbeat.status,1m,5m,missed > 2 intervals,SRE,ENABLE_WORKER_RUNTIME,Stop recurring workers and serve stale-known-good,true
 last_heartbeat_at,P0.2,worker_runtime,Worker Health,worker.heartbeat.last_seen,1m,5m,older than 5m,SRE,ENABLE_WORKER_RUNTIME,Stop recurring workers and serve stale-known-good,true
 epg_freshness_age_hours,P0.3,epg_import_worker,EPG Health,epg.freshness.age_hours,30m,6h,>6h,Content Ops,ENABLE_EPG_IMPORT,Freeze new EPG materialization and serve prior cache,true
 epg_join_validation_status,P0.3,epg_validation_gate,EPG Health,epg.join.validation.status,post-import,6h,status=fail,Content Ops,ENABLE_EPG_JOIN_GATE,Block downstream now/next materialization,true
-cache_served_from,P0.4,cache_reader,Cache Health,cache.served_from,request_agg_5m,screen-specific,empty or stale spike,API Ops,ENABLE_ASYNC_CACHE_REFRESH,Force serving existing valid snapshot,true
-stale_ratio_by_screen,P0.4,cache_reader,Cache Health,cache.stale_ratio.by_screen,5m,screen-specific,above configured threshold,API Ops,ENABLE_ASYNC_CACHE_REFRESH,Force serving existing valid snapshot,true
+cache_stale_serving_status,P0.4,cache_reader,Cache Health,cache.served_from,request_agg_5m,screen-specific,empty or stale spike,API Ops,ENABLE_ASYNC_CACHE_REFRESH,Force serving existing valid snapshot,true
+cache_stale_ratio,P0.4,cache_reader,Cache Health,cache.stale_ratio.by_screen,5m,screen-specific,above configured threshold,API Ops,ENABLE_ASYNC_CACHE_REFRESH,Force serving existing valid snapshot,true
 quality_gate_result,P0.5,db_quality_gate,Quality Gates,quality.gate.result,on-deploy/daily,24h,status=fail,Content Ops,ENABLE_DB_QUALITY_GATE_AUTOMATION,Freeze automated repair steps,true
 duplicate_ratio,P0.5,db_quality_gate,Quality Gates,quality.duplicate_ratio.by_screen,on-deploy/daily,24h,>0.05,Content Ops,ENABLE_DB_QUALITY_GATE_AUTOMATION,Freeze automated repair steps,true
 blank_key_ratio,P0.5,db_quality_gate,Quality Gates,quality.blank_key_ratio.by_screen,on-deploy/daily,24h,>0.01,Content Ops,ENABLE_DB_QUALITY_GATE_AUTOMATION,Freeze automated repair steps,true
@@ -16,3 +16,4 @@ materialization_dead_letter_count,P0.6,materialization_queue_worker,Materializat
 materialization_requeue_rate,P0.6,materialization_queue_worker,Materialization,materialization.queue.requeue_rate,15m,n/a,spike above baseline,Content Ops,ENABLE_MATERIALIZATION_CONSUMERS,Pause consumers and retain queue,true
 playback_preflight_outcome,P0.7,playback_resolver,Playback Diagnostics,playback.preflight.outcome,event_agg_15m,n/a,error spike,SRE,ENABLE_PLAYBACK_ATTRIBUTION,Disable attribution writer only,true
 attribution_coverage_percent,P0.7,playback_resolver,Playback Diagnostics,playback.attribution.coverage_percent,15m,n/a,<95,SRE,ENABLE_PLAYBACK_ATTRIBUTION,Disable attribution writer only,true
+
