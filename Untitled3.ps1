@@ -1,1 +1,0 @@
-﻿curl.exe -i "https://miratv.club/_workers/ai/series/concepts/episodes?token=WYWIQAB5ICKL2VUW9PW98IYF2JMNF9XY&seriesId=54332"

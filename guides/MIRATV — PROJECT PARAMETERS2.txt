@@ -1,1 +1,0 @@
-powershell -NoProfile -ExecutionPolicy Bypass -File "C:miratv_ingest\triggers\9materialize_series_trigger.ps1"

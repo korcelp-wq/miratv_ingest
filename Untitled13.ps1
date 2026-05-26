@@ -1,1 +1,0 @@
-﻿Select-String -Path .\app\src\main\java\**\*.kt -Pattern "series/concepts" -SimpleMatch
