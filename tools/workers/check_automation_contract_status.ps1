@@ -288,6 +288,13 @@ try {
             Recurring = $true
             RequiredSignals = @("materialization_queue_oldest_age_minutes", "materialization_dead_letter_count", "materialization_requeue_rate", "worker_heartbeat_status")
             RequiredKillSwitch = "ENABLE_MATERIALIZATION_CONSUMERS"
+        },
+        @{
+            Name = "check_playback_preflight_attribution"
+            Path = "tools\workers\check_playback_preflight_attribution.ps1"
+            Recurring = $true
+            RequiredSignals = @("playback_preflight_outcome", "attribution_coverage_percent", "worker_heartbeat_status")
+            RequiredKillSwitch = "ENABLE_PLAYBACK_ATTRIBUTION"
         }
     )
 
