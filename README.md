@@ -56,6 +56,7 @@ tools/workers/emit_worker_heartbeat.ps1
 tools/workers/check_automation_contract_status.ps1
 tools/workers/refresh_user_bouquet_availability.ps1
 tools/workers/refresh_user_item_availability.ps1
+tools/workers/refresh_user_series_availability.ps1
 Governance Loop
 
 No automation is complete until all five conditions are true:
@@ -174,7 +175,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File "tools/workers/check_automation_co
 
 Expected result:
 
-RESULT: pass total_units=4 compliant=4 blocked=0
+RESULT: pass total_units=5 compliant=5 blocked=0
 
 This validates the current automation units against the implementation contract.
 
@@ -184,6 +185,7 @@ emit_worker_heartbeat
 check_automation_contract_status
 refresh_user_bouquet_availability
 refresh_user_item_availability
+refresh_user_series_availability
 3. Run bouquet availability scaffold
 pwsh -NoProfile -ExecutionPolicy Bypass -File "tools/workers/refresh_user_bouquet_availability.ps1" -Environment "dev"
 
@@ -228,6 +230,28 @@ worker_heartbeat_status
 Kill switch:
 
 ENABLE_AVAILABILITY_REFRESH
+5. Run series availability scaffold
+pwsh -NoProfile -ExecutionPolicy Bypass -File "tools/workers/refresh_user_series_availability.ps1" -Environment "dev"
+
+Expected result:
+
+OK: series availability refresh scaffold completed.
+
+Current mode:
+
+DryRun
+
+This scaffold does not write to the database yet. It proves logging, heartbeat, signal emission, and kill switch behavior for the P0.1 series availability refresh lane.
+
+Signals emitted:
+
+availability_refresh_status
+availability_refresh_lag_minutes
+worker_heartbeat_status
+
+Kill switch:
+
+ENABLE_AVAILABILITY_REFRESH
 Kill Switch Examples
 Disable worker runtime
 $env:ENABLE_WORKER_RUNTIME = "false"
@@ -259,6 +283,16 @@ $env:ENABLE_AVAILABILITY_REFRESH = $null
 Expected result:
 
 SKIPPED: ENABLE_AVAILABILITY_REFRESH is disabled.
+Disable series availability refresh
+$env:ENABLE_AVAILABILITY_REFRESH = "false"
+
+pwsh -NoProfile -ExecutionPolicy Bypass -File "tools/workers/refresh_user_series_availability.ps1" -Environment "dev"
+
+$env:ENABLE_AVAILABILITY_REFRESH = $null
+
+Expected result:
+
+SKIPPED: ENABLE_AVAILABILITY_REFRESH is disabled.
 Runtime Logs
 
 Local-first JSONL logs are written under:
@@ -271,6 +305,7 @@ runtime/logs/worker_runtime/
 runtime/logs/automation_contract_checker/
 runtime/logs/availability_worker/
 runtime/logs/availability_item_worker/
+runtime/logs/availability_series_worker/
 
 Runtime logs are intentionally ignored by Git and should not be committed.
 
@@ -282,7 +317,8 @@ emit_worker_heartbeat              PASS
 check_automation_contract_status   PASS
 refresh_user_bouquet_availability  PASS / DryRun
 refresh_user_item_availability     PASS / DryRun
-contract checker                   RESULT: pass total_units=4 compliant=4 blocked=0
+refresh_user_series_availability   PASS / DryRun
+contract checker                   RESULT: pass total_units=5 compliant=5 blocked=0
 
 The PowerShell warning about unapproved verbs from the Logging module is currently accepted as non-blocking.
 
@@ -315,27 +351,26 @@ git commit -m "<type>: <clear message>"
 git push
 Current Commit Baseline
 
-Current known clean history before the item availability commit:
+Current known clean history before the series availability commit:
 
+65f2852 feat: add user item availability scaffold
 02384d2 feat: add automation contract checker and availability scaffold
 fdf28a1 feat: add worker heartbeat emitter
 8cac6f2 feat: add PHP worker logging helper
 f3c4de3 feat: add PowerShell logging helper
 1261ad1 chore: restrict repo baseline to governance automation pack
-28fa4a9 Initial governance/contract pack
 
-After committing the item availability worker, update this section with the new commit hash.
+After committing the series availability worker, update this section with the new commit hash.
 
 Next Planned Workers
 
-Recommended order after item availability is committed:
+Recommended order after series availability is committed:
 
-1. refresh_user_series_availability.ps1
-2. EPG freshness / import signal worker
-3. EPG join validation gate
-4. live cache quality gate runner
-5. materialization queue reliability worker
-6. playback preflight attribution worker
+1. EPG freshness / import signal worker
+2. EPG join validation gate
+3. live cache quality gate runner
+4. materialization queue reliability worker
+5. playback preflight attribution worker
 
 Each worker must pass the contract checker before it is considered accepted.
 
@@ -355,3 +390,25 @@ No runtime logs.
 No worker accepted without logs, heartbeat/signals, dashboard mapping, and kill switch.
 
 Badaboom.
+
+
+Then run:
+
+```powershell
+git add README.md
+
+git status --short
+
+Expected:
+
+M  README.md
+M  tools/workers/check_automation_contract_status.ps1
+A  tools/workers/refresh_user_series_availability.ps1
+
+Final validation before commit:
+
+pwsh -NoProfile -ExecutionPolicy Bypass -File "tools/workers/check_automation_contract_status.ps1" -Environment "dev"
+
+Expected:
+
+RESULT: pass total_units=5 compliant=5 blocked=0

@@ -246,6 +246,13 @@ try {
             Recurring = $true
             RequiredSignals = @("availability_refresh_status", "availability_refresh_lag_minutes", "worker_heartbeat_status")
             RequiredKillSwitch = "ENABLE_AVAILABILITY_REFRESH"
+        },
+        @{
+            Name = "refresh_user_series_availability"
+            Path = "tools\workers\refresh_user_series_availability.ps1"
+            Recurring = $true
+            RequiredSignals = @("availability_refresh_status", "availability_refresh_lag_minutes", "worker_heartbeat_status")
+            RequiredKillSwitch = "ENABLE_AVAILABILITY_REFRESH"
         }
     )
 
