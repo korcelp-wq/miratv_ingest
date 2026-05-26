@@ -1,15 +1,26 @@
 # MiraTV DB Quality Gates Worker
 # File: tools/workers/run_db_quality_gates.ps1
 # Purpose:
-#   P0.5 automated DB quality gates scaffold.
-#   Establishes observable quality gates for live/cache data quality before DB-backed enforcement.
+#   P0.5 automated DB quality gates scaffold + read-only DB-backed mode.
+#   Establishes observable quality gates for app-eligible base live inventory.
 #
 # Current implementation:
-#   - Local-first, no DB writes yet.
-#   - Supports DryRun and SnapshotInput modes.
-#   - Emits quality gate, duplicate ratio, blank key ratio, filter diversity, and heartbeat signals.
+#   - Supports DryRun, SnapshotInput, and DbQuery modes.
+#   - DbQuery mode uses tools/common/DbQuery.psm1, which calls dog_open_proc.php.
+#   - DbQuery mode evaluates the base live channel universe, not only the screen named "Live".
 #   - Does not mutate database tables.
-#   - Designed to be extended with DB/query bridge checks later.
+#
+# Base live quality rule:
+#   EPG/live quality is a global live_channels concern.
+#   This worker evaluates all active app-eligible live_channels.
+#   Screen-specific gates for live/24_7/ppv/soccer/aps/home can be added later.
+#
+# App-eligible exclusion rule:
+#   Exclude intentionally low-value/noisy novelty rows from actionable quality counts:
+#     - XMAS
+#     - FIREPLACE
+#     - AMBIENT
+#     - VEVO
 #
 # Signals:
 #   - quality_gate_result
@@ -21,14 +32,15 @@
 # Kill switch:
 #   - ENABLE_DB_QUALITY_GATE_AUTOMATION
 #
+# Required for DbQuery mode:
+#   $env:DOG_OPEN_PROC_ENDPOINT = "https://miratv.club/_workers/api/series/dog_open_proc.php"
+#   $env:DOG_OPEN_PROC_TOKEN = "<token>"
+#
 # Usage:
 #   pwsh -NoProfile -ExecutionPolicy Bypass -File "tools/workers/run_db_quality_gates.ps1" -Environment "dev"
 #
-# Optional snapshot input:
-#   pwsh -NoProfile -ExecutionPolicy Bypass -File "tools/workers/run_db_quality_gates.ps1" `
-#     -Environment "dev" `
-#     -Mode "SnapshotInput" `
-#     -InputJsonPath "runtime/samples/db_quality_snapshot.json"
+# DbQuery:
+#   pwsh -NoProfile -ExecutionPolicy Bypass -File "tools/workers/run_db_quality_gates.ps1" -Environment "dev" -Mode "DbQuery"
 
 [CmdletBinding()]
 param(
@@ -37,11 +49,15 @@ param(
     [string]$Environment = "prod",
     [string]$KillSwitchName = "ENABLE_DB_QUALITY_GATE_AUTOMATION",
 
-    [ValidateSet("DryRun", "SnapshotInput")]
+    [ValidateSet("DryRun", "SnapshotInput", "DbQuery")]
     [string]$Mode = "DryRun",
 
     [string]$InputJsonPath = "",
-    [string]$ScreenType = "",
+    [string]$DatabaseKey = "content",
+    [string]$DbQueryEndpoint = "",
+    [string]$DbQueryToken = "",
+    [int]$QueryTimeoutSec = 30,
+
     [decimal]$MaxDuplicateRatio = 0.05,
     [decimal]$MaxBlankKeyRatio = 0.01,
     [int]$MinimumFilterDiversityScore = 2,
@@ -118,7 +134,7 @@ function Read-QualitySnapshot {
     return $raw | ConvertFrom-Json -ErrorAction Stop
 }
 
-function Convert-ToArray {
+function Convert-ToArraySafe {
     [CmdletBinding()]
     param(
         [AllowNull()]
@@ -202,7 +218,7 @@ function Convert-ToDecimalSafe {
     return $DefaultValue
 }
 
-function Get-QualityRows {
+function Get-SnapshotMetricRow {
     [CmdletBinding()]
     param(
         [AllowNull()]
@@ -210,155 +226,328 @@ function Get-QualityRows {
     )
 
     if ($null -eq $Snapshot) {
-        return @()
-    }
-
-    if ($Snapshot.PSObject.Properties.Name -contains "screens") {
-        return Convert-ToArray -Value $Snapshot.screens
-    }
-
-    if ($Snapshot.PSObject.Properties.Name -contains "items") {
-        return Convert-ToArray -Value $Snapshot.items
+        return $null
     }
 
     if ($Snapshot.PSObject.Properties.Name -contains "metrics") {
-        return Convert-ToArray -Value $Snapshot.metrics
+        $rows = Convert-ToArraySafe -Value $Snapshot.metrics
+        if ($rows.Count -gt 0) {
+            return $rows[0]
+        }
     }
 
-    if ($Snapshot.PSObject.Properties.Name -contains "results") {
-        return Convert-ToArray -Value $Snapshot.results
+    if ($Snapshot.PSObject.Properties.Name -contains "rows") {
+        $rows = Convert-ToArraySafe -Value $Snapshot.rows
+        if ($rows.Count -gt 0) {
+            return $rows[0]
+        }
     }
 
-    return Convert-ToArray -Value $Snapshot
+    if ($Snapshot.PSObject.Properties.Name -contains "result") {
+        $rows = Convert-ToArraySafe -Value $Snapshot.result
+        if ($rows.Count -gt 0) {
+            return $rows[0]
+        }
+    }
+
+    if ($Snapshot.PSObject.Properties.Name -contains "screens") {
+        $rows = Convert-ToArraySafe -Value $Snapshot.screens
+        if ($rows.Count -gt 0) {
+            return $rows[0]
+        }
+    }
+
+    if ($Snapshot.PSObject.Properties.Name -contains "items") {
+        $rows = Convert-ToArraySafe -Value $Snapshot.items
+        if ($rows.Count -gt 0) {
+            return $rows[0]
+        }
+    }
+
+    return $Snapshot
 }
 
-function Get-DbQualityMetrics {
+function Get-LiveQualityGateSql {
+    [CmdletBinding()]
+    param()
+
+    return @"
+SELECT
+    totals.screen_type,
+    totals.total_rows,
+    totals.excluded_rows,
+    dup.duplicate_rows,
+    blank.blank_key_rows,
+    filters.filter_diversity_score,
+    CASE
+        WHEN totals.total_rows > 0 THEN ROUND(dup.duplicate_rows / totals.total_rows, 6)
+        ELSE 0
+    END AS duplicate_ratio,
+    CASE
+        WHEN totals.total_rows > 0 THEN ROUND(blank.blank_key_rows / totals.total_rows, 6)
+        ELSE 0
+    END AS blank_key_ratio
+FROM
+    (
+        SELECT
+            'live_channels' AS screen_type,
+            COUNT(*) AS total_rows,
+            SUM(
+                CASE
+                    WHEN UPPER(COALESCE(name, '')) LIKE 'XMAS|%'
+                      OR UPPER(COALESCE(name, '')) LIKE '%FIREPLACE%'
+                      OR UPPER(COALESCE(name, '')) LIKE '%AMBIENT%'
+                      OR UPPER(COALESCE(name, '')) LIKE '%VEVO%'
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS excluded_rows
+        FROM live_channels
+        WHERE COALESCE(is_active, 1) = 1
+          AND UPPER(COALESCE(name, '')) NOT LIKE 'XMAS|%'
+          AND UPPER(COALESCE(name, '')) NOT LIKE '%FIREPLACE%'
+          AND UPPER(COALESCE(name, '')) NOT LIKE '%AMBIENT%'
+          AND UPPER(COALESCE(name, '')) NOT LIKE '%VEVO%'
+    ) totals
+CROSS JOIN
+    (
+        SELECT
+            COALESCE(SUM(dup_rows), 0) AS duplicate_rows
+        FROM
+            (
+                SELECT
+                    CASE
+                        WHEN COUNT(*) > 1 THEN COUNT(*) - 1
+                        ELSE 0
+                    END AS dup_rows
+                FROM live_channels
+                WHERE COALESCE(is_active, 1) = 1
+                  AND UPPER(COALESCE(name, '')) NOT LIKE 'XMAS|%'
+                  AND UPPER(COALESCE(name, '')) NOT LIKE '%FIREPLACE%'
+                  AND UPPER(COALESCE(name, '')) NOT LIKE '%AMBIENT%'
+                  AND UPPER(COALESCE(name, '')) NOT LIKE '%VEVO%'
+                  AND COALESCE(NULLIF(TRIM(clean_search_name), ''), NULLIF(TRIM(name), '')) IS NOT NULL
+                GROUP BY COALESCE(NULLIF(TRIM(clean_search_name), ''), NULLIF(TRIM(name), ''))
+                HAVING COUNT(*) > 1
+            ) d
+    ) dup
+CROSS JOIN
+    (
+        SELECT
+            SUM(
+                CASE
+                    WHEN provider_stream_id IS NULL
+                      OR provider_stream_id = ''
+                      OR name IS NULL
+                      OR TRIM(name) = ''
+                      OR COALESCE(NULLIF(TRIM(clean_search_name), ''), NULLIF(TRIM(name), '')) IS NULL
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS blank_key_rows
+        FROM live_channels
+        WHERE COALESCE(is_active, 1) = 1
+          AND UPPER(COALESCE(name, '')) NOT LIKE 'XMAS|%'
+          AND UPPER(COALESCE(name, '')) NOT LIKE '%FIREPLACE%'
+          AND UPPER(COALESCE(name, '')) NOT LIKE '%AMBIENT%'
+          AND UPPER(COALESCE(name, '')) NOT LIKE '%VEVO%'
+    ) blank
+CROSS JOIN
+    (
+        SELECT
+            COUNT(DISTINCT category_id) AS filter_diversity_score
+        FROM live_channels
+        WHERE COALESCE(is_active, 1) = 1
+          AND category_id IS NOT NULL
+          AND category_id <> ''
+          AND UPPER(COALESCE(name, '')) NOT LIKE 'XMAS|%'
+          AND UPPER(COALESCE(name, '')) NOT LIKE '%FIREPLACE%'
+          AND UPPER(COALESCE(name, '')) NOT LIKE '%AMBIENT%'
+          AND UPPER(COALESCE(name, '')) NOT LIKE '%VEVO%'
+    ) filters
+"@
+}
+
+function Get-LiveQualityGateDbRow {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+
+        [string]$DatabaseKey = "content",
+
+        [string]$Endpoint = "",
+
+        [string]$Token = "",
+
+        [int]$TimeoutSec = 30
+    )
+
+    $dbQueryModule = Join-Path $RepoRoot "tools\common\DbQuery.psm1"
+
+    if (-not (Test-Path -LiteralPath $dbQueryModule)) {
+        throw "DbQuery module not found at: $dbQueryModule"
+    }
+
+    Import-Module $dbQueryModule -Force
+
+    $sql = Get-LiveQualityGateSql
+
+    $queryResult = Invoke-ReadOnlyDbQuery `
+        -DatabaseKey $DatabaseKey `
+        -Sql $sql `
+        -Endpoint $Endpoint `
+        -Token $Token `
+        -TimeoutSec $TimeoutSec
+
+    if ($null -eq $queryResult) {
+        throw "DbQuery returned null result."
+    }
+
+    if (-not ($queryResult.PSObject.Properties.Name -contains "rows")) {
+        throw "DbQuery result did not include rows."
+    }
+
+    $rows = Convert-ToArraySafe -Value $queryResult.rows
+
+    if ($rows.Count -eq 0) {
+        throw "DbQuery returned zero rows for live quality gate query."
+    }
+
+    return $rows[0]
+}
+
+function Get-QualityGateMetrics {
     [CmdletBinding()]
     param(
         [AllowNull()]
-        [object]$Snapshot,
+        [object]$MetricRow,
 
-        [string]$ScreenType,
+        [string]$Mode,
 
         [decimal]$MaxDuplicateRatio,
 
         [decimal]$MaxBlankKeyRatio,
 
-        [int]$MinimumFilterDiversityScore
+        [int]$MinimumFilterDiversityScore,
+
+        [string]$SourceName
     )
-
-    $rows = Get-QualityRows -Snapshot $Snapshot
-
-    if (-not [string]::IsNullOrWhiteSpace($ScreenType)) {
-        $rows = @(
-            $rows | Where-Object {
-                $screenRaw = Get-PropertyValue -Object $_ -Names @("screen_type", "screen", "page")
-                ([string]$screenRaw).Trim().ToLowerInvariant() -eq $ScreenType.Trim().ToLowerInvariant()
-            }
-        )
-    }
-
-    $totalScreens = @($rows).Count
-    $worstDuplicateRatio = [decimal]0
-    $worstBlankKeyRatio = [decimal]0
-    $lowestFilterDiversityScore = 999999
-    $failedScreens = 0
-    $warningScreens = 0
-    $screenSummaries = @()
-
-    foreach ($row in $rows) {
-        $screenRaw = Get-PropertyValue -Object $row -Names @("screen_type", "screen", "page")
-        $screen = "unknown"
-
-        if ($null -ne $screenRaw -and -not [string]::IsNullOrWhiteSpace([string]$screenRaw)) {
-            $screen = ([string]$screenRaw).Trim().ToLowerInvariant()
-        }
-
-        $duplicateRatio = Convert-ToDecimalSafe -Value (Get-PropertyValue -Object $row -Names @("duplicate_ratio", "dupe_ratio", "duplicate_rate")) -DefaultValue 0
-        $blankKeyRatio = Convert-ToDecimalSafe -Value (Get-PropertyValue -Object $row -Names @("blank_key_ratio", "missing_key_ratio", "blank_keys_ratio")) -DefaultValue 0
-        $filterDiversityScore = Convert-ToIntSafe -Value (Get-PropertyValue -Object $row -Names @("filter_diversity_score", "filter_count", "distinct_filter_count")) -DefaultValue 0
-
-        if ($duplicateRatio -gt $worstDuplicateRatio) {
-            $worstDuplicateRatio = $duplicateRatio
-        }
-
-        if ($blankKeyRatio -gt $worstBlankKeyRatio) {
-            $worstBlankKeyRatio = $blankKeyRatio
-        }
-
-        if ($filterDiversityScore -lt $lowestFilterDiversityScore) {
-            $lowestFilterDiversityScore = $filterDiversityScore
-        }
-
-        $screenStatus = "pass"
-        $screenNote = "quality metrics within configured thresholds"
-
-        if ($duplicateRatio -gt $MaxDuplicateRatio -or $blankKeyRatio -gt $MaxBlankKeyRatio) {
-            $screenStatus = "fail"
-            $screenNote = "hard quality threshold exceeded"
-            $failedScreens++
-        }
-        elseif ($filterDiversityScore -lt $MinimumFilterDiversityScore) {
-            $screenStatus = "warning"
-            $screenNote = "filter diversity below configured minimum"
-            $warningScreens++
-        }
-
-        $screenSummaries += [ordered]@{
-            screen_type = $screen
-            status = $screenStatus
-            duplicate_ratio = $duplicateRatio
-            blank_key_ratio = $blankKeyRatio
-            filter_diversity_score = $filterDiversityScore
-            note = $screenNote
-        }
-    }
-
-    if ($lowestFilterDiversityScore -eq 999999) {
-        $lowestFilterDiversityScore = 0
-    }
 
     $status = "dry_run"
     $qualityGateResult = "not_run"
-    $note = "local-first scaffold; no DB query performed"
+    $screenType = "live_channels"
+    $totalRows = 0
+    $excludedRows = 0
+    $duplicateRows = 0
+    $blankKeyRows = 0
+    $duplicateRatio = [decimal]0
+    $blankKeyRatio = [decimal]0
+    $filterDiversityScore = 0
+    $validationNote = "local-first scaffold; no DB query performed"
 
-    if ($null -ne $Snapshot) {
-        $status = "pass"
+    if ($null -ne $MetricRow) {
+        $screenTypeRaw = Get-PropertyValue -Object $MetricRow -Names @("screen_type", "screen", "page")
+
+        if ($null -ne $screenTypeRaw -and -not [string]::IsNullOrWhiteSpace([string]$screenTypeRaw)) {
+            $screenType = ([string]$screenTypeRaw).Trim()
+        }
+
+        $totalRows = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "total_rows",
+            "total_count",
+            "row_count"
+        ))
+
+        $excludedRows = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "excluded_rows",
+            "excluded_count",
+            "non_actionable_rows"
+        ))
+
+        $duplicateRows = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "duplicate_rows",
+            "duplicate_count",
+            "dupe_rows"
+        ))
+
+        $blankKeyRows = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "blank_key_rows",
+            "missing_key_rows",
+            "blank_rows"
+        ))
+
+        $duplicateRatio = Convert-ToDecimalSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "duplicate_ratio",
+            "dupe_ratio",
+            "duplicate_rate"
+        ))
+
+        $blankKeyRatio = Convert-ToDecimalSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "blank_key_ratio",
+            "missing_key_ratio",
+            "blank_keys_ratio"
+        ))
+
+        $filterDiversityScore = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "filter_diversity_score",
+            "filter_count",
+            "distinct_filter_count"
+        ))
+
+        if ($totalRows -gt 0) {
+            if ($duplicateRatio -eq 0 -and $duplicateRows -gt 0) {
+                $duplicateRatio = [decimal]::Round(([decimal]$duplicateRows / [decimal]$totalRows), 6)
+            }
+
+            if ($blankKeyRatio -eq 0 -and $blankKeyRows -gt 0) {
+                $blankKeyRatio = [decimal]::Round(([decimal]$blankKeyRows / [decimal]$totalRows), 6)
+            }
+        }
+
+        $status = "ok"
         $qualityGateResult = "pass"
-        $note = "quality gate metrics within configured thresholds"
+        $validationNote = "base live channel quality metrics are within configured thresholds"
 
-        if ($totalScreens -eq 0) {
+        if ($totalRows -le 0) {
             $status = "warning"
             $qualityGateResult = "warning"
-            $note = "no quality rows found for evaluated scope"
+            $validationNote = "no app-eligible live channel rows found"
         }
-        elseif ($failedScreens -gt 0) {
-            $status = "fail"
-            $qualityGateResult = "fail"
-            $note = "one or more hard quality thresholds exceeded"
-        }
-        elseif ($warningScreens -gt 0) {
+        elseif ($duplicateRatio -gt $MaxDuplicateRatio) {
             $status = "warning"
             $qualityGateResult = "warning"
-            $note = "one or more warning quality thresholds exceeded"
+            $validationNote = "duplicate ratio exceeds configured threshold"
+        }
+        elseif ($blankKeyRatio -gt $MaxBlankKeyRatio) {
+            $status = "warning"
+            $qualityGateResult = "warning"
+            $validationNote = "blank key ratio exceeds configured threshold"
+        }
+        elseif ($filterDiversityScore -lt $MinimumFilterDiversityScore) {
+            $status = "warning"
+            $qualityGateResult = "warning"
+            $validationNote = "filter diversity score is below configured minimum"
         }
     }
 
     return [ordered]@{
         status = $status
         quality_gate_result = $qualityGateResult
-        duplicate_ratio = $worstDuplicateRatio
-        blank_key_ratio = $worstBlankKeyRatio
-        filter_diversity_score = $lowestFilterDiversityScore
+        screen_type = $screenType
+        total_rows = $totalRows
+        excluded_rows = $excludedRows
+        duplicate_rows = $duplicateRows
+        blank_key_rows = $blankKeyRows
+        duplicate_ratio = $duplicateRatio
+        blank_key_ratio = $blankKeyRatio
+        filter_diversity_score = $filterDiversityScore
         max_duplicate_ratio = $MaxDuplicateRatio
         max_blank_key_ratio = $MaxBlankKeyRatio
         minimum_filter_diversity_score = $MinimumFilterDiversityScore
-        total_screens = $totalScreens
-        failed_screens = $failedScreens
-        warning_screens = $warningScreens
-        screen_type = $ScreenType
-        screen_summaries = $screenSummaries
-        validation_note = $note
+        source_name = $SourceName
+        mode = $Mode
+        validation_note = $validationNote
     }
 }
 
@@ -431,7 +620,7 @@ try {
         -Data @{
             kill_switch_name = $KillSwitchName
             mode = $Mode
-            screen_type = $ScreenType
+            database_key = $DatabaseKey
             max_duplicate_ratio = $MaxDuplicateRatio
             max_blank_key_ratio = $MaxBlankKeyRatio
             minimum_filter_diversity_score = $MinimumFilterDiversityScore
@@ -474,7 +663,8 @@ try {
         } `
         -LogRoot $LogRoot | Out-Null
 
-    $snapshot = $null
+    $metricRow = $null
+    $sourceName = "dry_run_no_db_query"
 
     if ($Mode -eq "SnapshotInput") {
         if ([string]::IsNullOrWhiteSpace($InputJsonPath)) {
@@ -483,14 +673,27 @@ try {
 
         $resolvedInput = Resolve-RepoRelativePath -RepoRoot $repoRoot -Path $InputJsonPath
         $snapshot = Read-QualitySnapshot -Path $resolvedInput
+        $metricRow = Get-SnapshotMetricRow -Snapshot $snapshot
+        $sourceName = "snapshot_input"
+    }
+    elseif ($Mode -eq "DbQuery") {
+        $metricRow = Get-LiveQualityGateDbRow `
+            -RepoRoot $repoRoot `
+            -DatabaseKey $DatabaseKey `
+            -Endpoint $DbQueryEndpoint `
+            -Token $DbQueryToken `
+            -TimeoutSec $QueryTimeoutSec
+
+        $sourceName = "dog_open_proc:content.live_channels"
     }
 
-    $metrics = Get-DbQualityMetrics `
-        -Snapshot $snapshot `
-        -ScreenType $ScreenType `
+    $metrics = Get-QualityGateMetrics `
+        -MetricRow $metricRow `
+        -Mode $Mode `
         -MaxDuplicateRatio $MaxDuplicateRatio `
         -MaxBlankKeyRatio $MaxBlankKeyRatio `
-        -MinimumFilterDiversityScore $MinimumFilterDiversityScore
+        -MinimumFilterDiversityScore $MinimumFilterDiversityScore `
+        -SourceName $sourceName
 
     Emit-Signal `
         -RunId $script:RunId `
@@ -504,16 +707,22 @@ try {
         -Status ([string]$metrics.status) `
         -AllowedValues "pass|fail|warning|not_run|disabled" `
         -SourceTableOrEndpoint "tools/workers/run_db_quality_gates.ps1" `
-        -ScreenType $ScreenType `
+        -ScreenType ([string]$metrics.screen_type) `
         -Data @{
             dashboard_panel = "Quality Gates"
             widget_key = "quality.gate.result"
             owner = "Content Ops"
             kill_switch_name = $KillSwitchName
             mode = $Mode
-            total_screens = $metrics.total_screens
-            failed_screens = $metrics.failed_screens
-            warning_screens = $metrics.warning_screens
+            source_name = $metrics.source_name
+            screen_type = $metrics.screen_type
+            total_rows = $metrics.total_rows
+            excluded_rows = $metrics.excluded_rows
+            duplicate_rows = $metrics.duplicate_rows
+            blank_key_rows = $metrics.blank_key_rows
+            duplicate_ratio = $metrics.duplicate_ratio
+            blank_key_ratio = $metrics.blank_key_ratio
+            filter_diversity_score = $metrics.filter_diversity_score
             validation_note = $metrics.validation_note
         } `
         -LogRoot $LogRoot | Out-Null
@@ -531,14 +740,18 @@ try {
         -Status ([string]$metrics.status) `
         -AllowedValues "0..1" `
         -SourceTableOrEndpoint "tools/workers/run_db_quality_gates.ps1" `
-        -ScreenType $ScreenType `
+        -ScreenType ([string]$metrics.screen_type) `
         -Data @{
             dashboard_panel = "Quality Gates"
             widget_key = "quality.duplicate_ratio.by_screen"
             owner = "Content Ops"
             kill_switch_name = $KillSwitchName
-            max_duplicate_ratio = $metrics.max_duplicate_ratio
             mode = $Mode
+            source_name = $metrics.source_name
+            screen_type = $metrics.screen_type
+            duplicate_rows = $metrics.duplicate_rows
+            total_rows = $metrics.total_rows
+            max_duplicate_ratio = $metrics.max_duplicate_ratio
         } `
         -LogRoot $LogRoot | Out-Null
 
@@ -555,14 +768,18 @@ try {
         -Status ([string]$metrics.status) `
         -AllowedValues "0..1" `
         -SourceTableOrEndpoint "tools/workers/run_db_quality_gates.ps1" `
-        -ScreenType $ScreenType `
+        -ScreenType ([string]$metrics.screen_type) `
         -Data @{
             dashboard_panel = "Quality Gates"
             widget_key = "quality.blank_key_ratio.by_screen"
             owner = "Content Ops"
             kill_switch_name = $KillSwitchName
-            max_blank_key_ratio = $metrics.max_blank_key_ratio
             mode = $Mode
+            source_name = $metrics.source_name
+            screen_type = $metrics.screen_type
+            blank_key_rows = $metrics.blank_key_rows
+            total_rows = $metrics.total_rows
+            max_blank_key_ratio = $metrics.max_blank_key_ratio
         } `
         -LogRoot $LogRoot | Out-Null
 
@@ -579,14 +796,16 @@ try {
         -Status ([string]$metrics.status) `
         -AllowedValues "0+" `
         -SourceTableOrEndpoint "tools/workers/run_db_quality_gates.ps1" `
-        -ScreenType $ScreenType `
+        -ScreenType ([string]$metrics.screen_type) `
         -Data @{
             dashboard_panel = "Quality Gates"
             widget_key = "quality.filter_diversity_score.by_screen"
             owner = "Content Ops"
             kill_switch_name = $KillSwitchName
-            minimum_filter_diversity_score = $metrics.minimum_filter_diversity_score
             mode = $Mode
+            source_name = $metrics.source_name
+            screen_type = $metrics.screen_type
+            minimum_filter_diversity_score = $metrics.minimum_filter_diversity_score
         } `
         -LogRoot $LogRoot | Out-Null
 
@@ -598,29 +817,34 @@ try {
         -Environment $Environment `
         -Status "job_completed" `
         -EventType "job_completed" `
-        -SourceName "db_quality_gates" `
-        -SourceRowCount ([int]$metrics.total_screens) `
+        -SourceName ([string]$metrics.source_name) `
+        -SourceRowCount ([int]$metrics.total_rows) `
         -RowsInserted 0 `
         -RowsUpdated 0 `
-        -RowsSkipped ([int]$metrics.total_screens) `
-        -RowsFailed ([int]$metrics.failed_screens) `
+        -RowsSkipped ([int]$metrics.total_rows) `
+        -RowsFailed 0 `
         -DurationMs (Get-DurationMs -Start $script:StartedAt) `
         -Data @{
             quality_gate_result = $metrics.quality_gate_result
+            screen_type = $metrics.screen_type
+            total_rows = $metrics.total_rows
+            excluded_rows = $metrics.excluded_rows
+            duplicate_rows = $metrics.duplicate_rows
+            blank_key_rows = $metrics.blank_key_rows
             duplicate_ratio = $metrics.duplicate_ratio
             blank_key_ratio = $metrics.blank_key_ratio
             filter_diversity_score = $metrics.filter_diversity_score
-            total_screens = $metrics.total_screens
-            failed_screens = $metrics.failed_screens
-            warning_screens = $metrics.warning_screens
-            screen_type = $ScreenType
+            max_duplicate_ratio = $metrics.max_duplicate_ratio
+            max_blank_key_ratio = $metrics.max_blank_key_ratio
+            minimum_filter_diversity_score = $metrics.minimum_filter_diversity_score
+            source_name = $metrics.source_name
             mode = $Mode
             validation_note = $metrics.validation_note
-            note = "local-first scaffold; no DB query performed"
+            note = "read-only base live channel quality check; no DB writes performed"
         } `
         -LogRoot $LogRoot | Out-Null
 
-    Write-Output "OK: DB quality gates completed. result=$($metrics.quality_gate_result) duplicate_ratio=$($metrics.duplicate_ratio) blank_key_ratio=$($metrics.blank_key_ratio) filter_diversity_score=$($metrics.filter_diversity_score) mode=$Mode run_id=$script:RunId"
+    Write-Output "OK: DB quality gates completed. result=$($metrics.quality_gate_result) screen_type=$($metrics.screen_type) total_rows=$($metrics.total_rows) duplicate_ratio=$($metrics.duplicate_ratio) blank_key_ratio=$($metrics.blank_key_ratio) filter_diversity_score=$($metrics.filter_diversity_score) mode=$Mode run_id=$script:RunId"
     exit 0
 }
 catch {
@@ -647,7 +871,7 @@ catch {
             -Data @{
                 kill_switch_name = $KillSwitchName
                 mode = $Mode
-                screen_type = $ScreenType
+                database_key = $DatabaseKey
             } `
             -LogRoot $LogRoot | Out-Null
 
@@ -663,7 +887,6 @@ catch {
             -Status "failed" `
             -AllowedValues "pass|fail|warning|not_run|disabled" `
             -SourceTableOrEndpoint "tools/workers/run_db_quality_gates.ps1" `
-            -ScreenType $ScreenType `
             -ErrorCode "DB_QUALITY_GATES_FAILED" `
             -ErrorMessage $message `
             -Data @{
