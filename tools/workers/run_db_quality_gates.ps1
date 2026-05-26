@@ -9,6 +9,7 @@
 #   - DbQuery mode uses tools/common/DbQuery.psm1, which calls dog_open_proc.php.
 #   - DbQuery mode evaluates the base live channel universe, not only the screen named "Live".
 #   - Does not mutate database tables.
+#   - Separates raw duplicate brand rows from actionable duplicate rows.
 #
 # Base live quality rule:
 #   EPG/live quality is a global live_channels concern.
@@ -21,6 +22,19 @@
 #     - FIREPLACE
 #     - AMBIENT
 #     - VEVO
+#
+# Duplicate rule:
+#   Raw duplicates:
+#     Same normalized clean/display key across all active app-eligible live inventory.
+#     This is diagnostic only because global channel brands can appear correctly in many countries/categories.
+#
+#   Variant duplicates:
+#     Same normalized clean/display key with different stream/category presence.
+#     These are expected inventory variants and should not fail the gate.
+#
+#   Actionable duplicates:
+#     Same normalized clean/display key AND same category_id AND same provider_stream_id.
+#     These are likely actual duplicate rows and drive duplicate_ratio/actionable warning.
 #
 # Signals:
 #   - quality_gate_result
@@ -275,14 +289,25 @@ function Get-LiveQualityGateSql {
 SELECT
     totals.screen_type,
     totals.total_rows,
-    totals.excluded_rows,
-    dup.duplicate_rows,
+    excluded.excluded_rows,
+
+    raw_dup.duplicate_rows_raw,
+    variant_dup.duplicate_rows_variant,
+    action_dup.duplicate_rows_actionable,
+
     blank.blank_key_rows,
     filters.filter_diversity_score,
+
     CASE
-        WHEN totals.total_rows > 0 THEN ROUND(dup.duplicate_rows / totals.total_rows, 6)
+        WHEN totals.total_rows > 0 THEN ROUND(raw_dup.duplicate_rows_raw / totals.total_rows, 6)
         ELSE 0
-    END AS duplicate_ratio,
+    END AS duplicate_ratio_raw,
+
+    CASE
+        WHEN totals.total_rows > 0 THEN ROUND(action_dup.duplicate_rows_actionable / totals.total_rows, 6)
+        ELSE 0
+    END AS duplicate_ratio_actionable,
+
     CASE
         WHEN totals.total_rows > 0 THEN ROUND(blank.blank_key_rows / totals.total_rows, 6)
         ELSE 0
@@ -291,17 +316,7 @@ FROM
     (
         SELECT
             'live_channels' AS screen_type,
-            COUNT(*) AS total_rows,
-            SUM(
-                CASE
-                    WHEN UPPER(COALESCE(name, '')) LIKE 'XMAS|%'
-                      OR UPPER(COALESCE(name, '')) LIKE '%FIREPLACE%'
-                      OR UPPER(COALESCE(name, '')) LIKE '%AMBIENT%'
-                      OR UPPER(COALESCE(name, '')) LIKE '%VEVO%'
-                    THEN 1
-                    ELSE 0
-                END
-            ) AS excluded_rows
+            COUNT(*) AS total_rows
         FROM live_channels
         WHERE COALESCE(is_active, 1) = 1
           AND UPPER(COALESCE(name, '')) NOT LIKE 'XMAS|%'
@@ -312,7 +327,20 @@ FROM
 CROSS JOIN
     (
         SELECT
-            COALESCE(SUM(dup_rows), 0) AS duplicate_rows
+            COUNT(*) AS excluded_rows
+        FROM live_channels
+        WHERE COALESCE(is_active, 1) = 1
+          AND (
+                UPPER(COALESCE(name, '')) LIKE 'XMAS|%'
+             OR UPPER(COALESCE(name, '')) LIKE '%FIREPLACE%'
+             OR UPPER(COALESCE(name, '')) LIKE '%AMBIENT%'
+             OR UPPER(COALESCE(name, '')) LIKE '%VEVO%'
+          )
+    ) excluded
+CROSS JOIN
+    (
+        SELECT
+            COALESCE(SUM(dup_rows), 0) AS duplicate_rows_raw
         FROM
             (
                 SELECT
@@ -330,7 +358,57 @@ CROSS JOIN
                 GROUP BY COALESCE(NULLIF(TRIM(clean_search_name), ''), NULLIF(TRIM(name), ''))
                 HAVING COUNT(*) > 1
             ) d
-    ) dup
+    ) raw_dup
+CROSS JOIN
+    (
+        SELECT
+            COALESCE(SUM(variant_rows), 0) AS duplicate_rows_variant
+        FROM
+            (
+                SELECT
+                    CASE
+                        WHEN COUNT(*) > 1
+                         AND COUNT(DISTINCT provider_stream_id) > 1
+                         AND COUNT(DISTINCT category_id) > 1
+                        THEN COUNT(*) - 1
+                        ELSE 0
+                    END AS variant_rows
+                FROM live_channels
+                WHERE COALESCE(is_active, 1) = 1
+                  AND UPPER(COALESCE(name, '')) NOT LIKE 'XMAS|%'
+                  AND UPPER(COALESCE(name, '')) NOT LIKE '%FIREPLACE%'
+                  AND UPPER(COALESCE(name, '')) NOT LIKE '%AMBIENT%'
+                  AND UPPER(COALESCE(name, '')) NOT LIKE '%VEVO%'
+                  AND COALESCE(NULLIF(TRIM(clean_search_name), ''), NULLIF(TRIM(name), '')) IS NOT NULL
+                GROUP BY COALESCE(NULLIF(TRIM(clean_search_name), ''), NULLIF(TRIM(name), ''))
+                HAVING COUNT(*) > 1
+            ) v
+    ) variant_dup
+CROSS JOIN
+    (
+        SELECT
+            COALESCE(SUM(actionable_rows), 0) AS duplicate_rows_actionable
+        FROM
+            (
+                SELECT
+                    CASE
+                        WHEN COUNT(*) > 1 THEN COUNT(*) - 1
+                        ELSE 0
+                    END AS actionable_rows
+                FROM live_channels
+                WHERE COALESCE(is_active, 1) = 1
+                  AND UPPER(COALESCE(name, '')) NOT LIKE 'XMAS|%'
+                  AND UPPER(COALESCE(name, '')) NOT LIKE '%FIREPLACE%'
+                  AND UPPER(COALESCE(name, '')) NOT LIKE '%AMBIENT%'
+                  AND UPPER(COALESCE(name, '')) NOT LIKE '%VEVO%'
+                  AND COALESCE(NULLIF(TRIM(clean_search_name), ''), NULLIF(TRIM(name), '')) IS NOT NULL
+                GROUP BY
+                    COALESCE(NULLIF(TRIM(clean_search_name), ''), NULLIF(TRIM(name), '')),
+                    COALESCE(category_id, ''),
+                    COALESCE(provider_stream_id, '')
+                HAVING COUNT(*) > 1
+            ) a
+    ) action_dup
 CROSS JOIN
     (
         SELECT
@@ -439,11 +517,18 @@ function Get-QualityGateMetrics {
     $screenType = "live_channels"
     $totalRows = 0
     $excludedRows = 0
-    $duplicateRows = 0
+
+    $duplicateRowsRaw = 0
+    $duplicateRowsVariant = 0
+    $duplicateRowsActionable = 0
+
     $blankKeyRows = 0
-    $duplicateRatio = [decimal]0
+
+    $duplicateRatioRaw = [decimal]0
+    $duplicateRatioActionable = [decimal]0
     $blankKeyRatio = [decimal]0
     $filterDiversityScore = 0
+
     $validationNote = "local-first scaffold; no DB query performed"
 
     if ($null -ne $MetricRow) {
@@ -465,10 +550,20 @@ function Get-QualityGateMetrics {
             "non_actionable_rows"
         ))
 
-        $duplicateRows = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
-            "duplicate_rows",
-            "duplicate_count",
-            "dupe_rows"
+        $duplicateRowsRaw = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "duplicate_rows_raw",
+            "raw_duplicate_rows",
+            "duplicate_rows"
+        ))
+
+        $duplicateRowsVariant = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "duplicate_rows_variant",
+            "variant_duplicate_rows"
+        ))
+
+        $duplicateRowsActionable = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "duplicate_rows_actionable",
+            "actionable_duplicate_rows"
         ))
 
         $blankKeyRows = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
@@ -477,10 +572,15 @@ function Get-QualityGateMetrics {
             "blank_rows"
         ))
 
-        $duplicateRatio = Convert-ToDecimalSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
-            "duplicate_ratio",
-            "dupe_ratio",
-            "duplicate_rate"
+        $duplicateRatioRaw = Convert-ToDecimalSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "duplicate_ratio_raw",
+            "raw_duplicate_ratio"
+        ))
+
+        $duplicateRatioActionable = Convert-ToDecimalSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "duplicate_ratio_actionable",
+            "actionable_duplicate_ratio",
+            "duplicate_ratio"
         ))
 
         $blankKeyRatio = Convert-ToDecimalSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
@@ -496,8 +596,12 @@ function Get-QualityGateMetrics {
         ))
 
         if ($totalRows -gt 0) {
-            if ($duplicateRatio -eq 0 -and $duplicateRows -gt 0) {
-                $duplicateRatio = [decimal]::Round(([decimal]$duplicateRows / [decimal]$totalRows), 6)
+            if ($duplicateRatioRaw -eq 0 -and $duplicateRowsRaw -gt 0) {
+                $duplicateRatioRaw = [decimal]::Round(([decimal]$duplicateRowsRaw / [decimal]$totalRows), 6)
+            }
+
+            if ($duplicateRatioActionable -eq 0 -and $duplicateRowsActionable -gt 0) {
+                $duplicateRatioActionable = [decimal]::Round(([decimal]$duplicateRowsActionable / [decimal]$totalRows), 6)
             }
 
             if ($blankKeyRatio -eq 0 -and $blankKeyRows -gt 0) {
@@ -507,17 +611,17 @@ function Get-QualityGateMetrics {
 
         $status = "ok"
         $qualityGateResult = "pass"
-        $validationNote = "base live channel quality metrics are within configured thresholds"
+        $validationNote = "base live channel actionable quality metrics are within configured thresholds"
 
         if ($totalRows -le 0) {
             $status = "warning"
             $qualityGateResult = "warning"
             $validationNote = "no app-eligible live channel rows found"
         }
-        elseif ($duplicateRatio -gt $MaxDuplicateRatio) {
+        elseif ($duplicateRatioActionable -gt $MaxDuplicateRatio) {
             $status = "warning"
             $qualityGateResult = "warning"
-            $validationNote = "duplicate ratio exceeds configured threshold"
+            $validationNote = "actionable duplicate ratio exceeds configured threshold"
         }
         elseif ($blankKeyRatio -gt $MaxBlankKeyRatio) {
             $status = "warning"
@@ -529,6 +633,11 @@ function Get-QualityGateMetrics {
             $qualityGateResult = "warning"
             $validationNote = "filter diversity score is below configured minimum"
         }
+        elseif ($duplicateRowsRaw -gt 0 -and $duplicateRowsActionable -eq 0) {
+            $status = "ok"
+            $qualityGateResult = "pass"
+            $validationNote = "raw duplicate brand rows exist, but they are variants/noise and not actionable"
+        }
     }
 
     return [ordered]@{
@@ -537,9 +646,19 @@ function Get-QualityGateMetrics {
         screen_type = $screenType
         total_rows = $totalRows
         excluded_rows = $excludedRows
-        duplicate_rows = $duplicateRows
+
+        # Compatibility field. From this version forward, duplicate_ratio means actionable duplicate ratio.
+        duplicate_ratio = $duplicateRatioActionable
+        duplicate_rows = $duplicateRowsActionable
+
+        duplicate_rows_raw = $duplicateRowsRaw
+        duplicate_rows_variant = $duplicateRowsVariant
+        duplicate_rows_actionable = $duplicateRowsActionable
+
+        duplicate_ratio_raw = $duplicateRatioRaw
+        duplicate_ratio_actionable = $duplicateRatioActionable
+
         blank_key_rows = $blankKeyRows
-        duplicate_ratio = $duplicateRatio
         blank_key_ratio = $blankKeyRatio
         filter_diversity_score = $filterDiversityScore
         max_duplicate_ratio = $MaxDuplicateRatio
@@ -719,8 +838,13 @@ try {
             total_rows = $metrics.total_rows
             excluded_rows = $metrics.excluded_rows
             duplicate_rows = $metrics.duplicate_rows
-            blank_key_rows = $metrics.blank_key_rows
+            duplicate_rows_raw = $metrics.duplicate_rows_raw
+            duplicate_rows_variant = $metrics.duplicate_rows_variant
+            duplicate_rows_actionable = $metrics.duplicate_rows_actionable
             duplicate_ratio = $metrics.duplicate_ratio
+            duplicate_ratio_raw = $metrics.duplicate_ratio_raw
+            duplicate_ratio_actionable = $metrics.duplicate_ratio_actionable
+            blank_key_rows = $metrics.blank_key_rows
             blank_key_ratio = $metrics.blank_key_ratio
             filter_diversity_score = $metrics.filter_diversity_score
             validation_note = $metrics.validation_note
@@ -750,6 +874,11 @@ try {
             source_name = $metrics.source_name
             screen_type = $metrics.screen_type
             duplicate_rows = $metrics.duplicate_rows
+            duplicate_rows_raw = $metrics.duplicate_rows_raw
+            duplicate_rows_variant = $metrics.duplicate_rows_variant
+            duplicate_rows_actionable = $metrics.duplicate_rows_actionable
+            duplicate_ratio_raw = $metrics.duplicate_ratio_raw
+            duplicate_ratio_actionable = $metrics.duplicate_ratio_actionable
             total_rows = $metrics.total_rows
             max_duplicate_ratio = $metrics.max_duplicate_ratio
         } `
@@ -830,8 +959,13 @@ try {
             total_rows = $metrics.total_rows
             excluded_rows = $metrics.excluded_rows
             duplicate_rows = $metrics.duplicate_rows
-            blank_key_rows = $metrics.blank_key_rows
+            duplicate_rows_raw = $metrics.duplicate_rows_raw
+            duplicate_rows_variant = $metrics.duplicate_rows_variant
+            duplicate_rows_actionable = $metrics.duplicate_rows_actionable
             duplicate_ratio = $metrics.duplicate_ratio
+            duplicate_ratio_raw = $metrics.duplicate_ratio_raw
+            duplicate_ratio_actionable = $metrics.duplicate_ratio_actionable
+            blank_key_rows = $metrics.blank_key_rows
             blank_key_ratio = $metrics.blank_key_ratio
             filter_diversity_score = $metrics.filter_diversity_score
             max_duplicate_ratio = $metrics.max_duplicate_ratio
@@ -844,7 +978,7 @@ try {
         } `
         -LogRoot $LogRoot | Out-Null
 
-    Write-Output "OK: DB quality gates completed. result=$($metrics.quality_gate_result) screen_type=$($metrics.screen_type) total_rows=$($metrics.total_rows) duplicate_ratio=$($metrics.duplicate_ratio) blank_key_ratio=$($metrics.blank_key_ratio) filter_diversity_score=$($metrics.filter_diversity_score) mode=$Mode run_id=$script:RunId"
+    Write-Output "OK: DB quality gates completed. result=$($metrics.quality_gate_result) screen_type=$($metrics.screen_type) total_rows=$($metrics.total_rows) duplicate_ratio_actionable=$($metrics.duplicate_ratio_actionable) duplicate_ratio_raw=$($metrics.duplicate_ratio_raw) blank_key_ratio=$($metrics.blank_key_ratio) filter_diversity_score=$($metrics.filter_diversity_score) mode=$Mode run_id=$script:RunId"
     exit 0
 }
 catch {
