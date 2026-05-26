@@ -9,6 +9,7 @@
 #   - DbQuery mode uses tools/common/DbQuery.psm1, which calls dog_open_proc.php.
 #   - Emits EPG join validation and worker heartbeat signals.
 #   - Does not mutate EPG/live tables.
+#   - Separates raw legacy numeric-collision rows from actionable bad legacy rows.
 #
 # Correct join rule:
 #   Preferred:
@@ -19,6 +20,15 @@
 #
 #   Bad legacy join to detect:
 #     live_channels.id = epg_programs.channel
+#
+# Noise/exclusion rule:
+#   Some provider rows intentionally should not be app/EPG actionable, such as
+#   XMAS/FIREPLACE/AMBIENT/VEVO novelty rows or rows without live.epg_channel_id.
+#   The worker now records:
+#     - bad_legacy_join_rows_raw
+#     - bad_legacy_join_rows_excluded
+#     - bad_legacy_join_rows_actionable
+#   Only actionable rows drive warning/fail status.
 #
 # Signals:
 #   - epg_join_validation_status
@@ -233,7 +243,9 @@ function Get-EpgJoinValidationSql {
 SELECT
     preferred.preferred_join_rows,
     fallback.acceptable_fallback_join_rows,
-    bad.bad_legacy_join_rows,
+    bad_raw.bad_legacy_join_rows_raw,
+    bad_excluded.bad_legacy_join_rows_excluded,
+    bad_actionable.bad_legacy_join_rows_actionable,
     epg.epg_program_count,
     epg.epg_channel_count,
     live.live_channel_count,
@@ -265,13 +277,49 @@ CROSS JOIN
 CROSS JOIN
     (
         SELECT
-            COUNT(*) AS bad_legacy_join_rows
+            COUNT(*) AS bad_legacy_join_rows_raw
         FROM epg_programs epg
         INNER JOIN live_channels live
             ON live.id = epg.channel
         WHERE epg.channel IS NOT NULL
           AND epg.channel <> ''
-    ) bad
+    ) bad_raw
+CROSS JOIN
+    (
+        SELECT
+            COUNT(*) AS bad_legacy_join_rows_excluded
+        FROM epg_programs epg
+        INNER JOIN live_channels live
+            ON live.id = epg.channel
+        WHERE epg.channel IS NOT NULL
+          AND epg.channel <> ''
+          AND (
+                live.epg_channel_id IS NULL
+             OR live.epg_channel_id = ''
+             OR UPPER(live.name) LIKE 'XMAS|%'
+             OR UPPER(live.name) LIKE '%FIREPLACE%'
+             OR UPPER(live.name) LIKE '%AMBIENT%'
+             OR UPPER(live.name) LIKE '%VEVO%'
+             OR UPPER(live.name) LIKE '%24/7%'
+          )
+    ) bad_excluded
+CROSS JOIN
+    (
+        SELECT
+            COUNT(*) AS bad_legacy_join_rows_actionable
+        FROM epg_programs epg
+        INNER JOIN live_channels live
+            ON live.id = epg.channel
+        WHERE epg.channel IS NOT NULL
+          AND epg.channel <> ''
+          AND live.epg_channel_id IS NOT NULL
+          AND live.epg_channel_id <> ''
+          AND UPPER(live.name) NOT LIKE 'XMAS|%'
+          AND UPPER(live.name) NOT LIKE '%FIREPLACE%'
+          AND UPPER(live.name) NOT LIKE '%AMBIENT%'
+          AND UPPER(live.name) NOT LIKE '%VEVO%'
+          AND UPPER(live.name) NOT LIKE '%24/7%'
+    ) bad_actionable
 CROSS JOIN
     (
         SELECT
@@ -359,7 +407,9 @@ function Get-EpgJoinMetrics {
     $joinStatus = "not_run"
     $preferredJoinRows = 0
     $acceptableFallbackJoinRows = 0
-    $badLegacyJoinRows = 0
+    $badLegacyJoinRowsRaw = 0
+    $badLegacyJoinRowsExcluded = 0
+    $badLegacyJoinRowsActionable = 0
     $epgProgramCount = 0
     $epgChannelCount = 0
     $liveChannelCount = 0
@@ -378,10 +428,22 @@ function Get-EpgJoinMetrics {
             "fallback_join_rows"
         ))
 
-        $badLegacyJoinRows = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
-            "bad_legacy_join_rows",
-            "legacy_join_rows",
-            "bad_join_rows"
+        $badLegacyJoinRowsRaw = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "bad_legacy_join_rows_raw",
+            "legacy_join_rows_raw",
+            "bad_join_rows_raw"
+        ))
+
+        $badLegacyJoinRowsExcluded = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "bad_legacy_join_rows_excluded",
+            "legacy_join_rows_excluded",
+            "excluded_visibility_noise_rows"
+        ))
+
+        $badLegacyJoinRowsActionable = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "bad_legacy_join_rows_actionable",
+            "legacy_join_rows_actionable",
+            "bad_join_rows_actionable"
         ))
 
         $epgProgramCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
@@ -406,7 +468,7 @@ function Get-EpgJoinMetrics {
 
         $status = "ok"
         $joinStatus = "pass"
-        $validationNote = "preferred EPG join is available and bad legacy join is within threshold"
+        $validationNote = "preferred EPG join is available and actionable bad legacy joins are within threshold"
 
         if ($epgProgramCount -le 0) {
             $status = "warning"
@@ -418,10 +480,15 @@ function Get-EpgJoinMetrics {
             $joinStatus = "fail"
             $validationNote = "preferred EPG join produced fewer rows than required"
         }
-        elseif ($badLegacyJoinRows -gt $MaximumBadLegacyJoinRows) {
+        elseif ($badLegacyJoinRowsActionable -gt $MaximumBadLegacyJoinRows) {
             $status = "warning"
             $joinStatus = "warning"
-            $validationNote = "bad legacy join produced rows above configured threshold"
+            $validationNote = "actionable bad legacy join rows are above configured threshold"
+        }
+        elseif ($badLegacyJoinRowsRaw -gt 0 -and $badLegacyJoinRowsActionable -eq 0) {
+            $status = "ok"
+            $joinStatus = "pass"
+            $validationNote = "raw bad legacy join rows exist, but they are excluded/noise and not actionable"
         }
     }
 
@@ -430,7 +497,14 @@ function Get-EpgJoinMetrics {
         epg_join_validation_status = $joinStatus
         preferred_join_rows = $preferredJoinRows
         acceptable_fallback_join_rows = $acceptableFallbackJoinRows
-        bad_legacy_join_rows = $badLegacyJoinRows
+
+        # Compatibility field. From this version forward, this means actionable bad legacy rows.
+        bad_legacy_join_rows = $badLegacyJoinRowsActionable
+
+        bad_legacy_join_rows_raw = $badLegacyJoinRowsRaw
+        bad_legacy_join_rows_excluded = $badLegacyJoinRowsExcluded
+        bad_legacy_join_rows_actionable = $badLegacyJoinRowsActionable
+
         minimum_preferred_join_rows = $MinimumPreferredJoinRows
         maximum_bad_legacy_join_rows = $MaximumBadLegacyJoinRows
         epg_program_count = $epgProgramCount
@@ -607,6 +681,9 @@ try {
             preferred_join_rows = $metrics.preferred_join_rows
             acceptable_fallback_join_rows = $metrics.acceptable_fallback_join_rows
             bad_legacy_join_rows = $metrics.bad_legacy_join_rows
+            bad_legacy_join_rows_raw = $metrics.bad_legacy_join_rows_raw
+            bad_legacy_join_rows_excluded = $metrics.bad_legacy_join_rows_excluded
+            bad_legacy_join_rows_actionable = $metrics.bad_legacy_join_rows_actionable
             minimum_preferred_join_rows = $metrics.minimum_preferred_join_rows
             maximum_bad_legacy_join_rows = $metrics.maximum_bad_legacy_join_rows
             epg_program_count = $metrics.epg_program_count
@@ -637,6 +714,9 @@ try {
             preferred_join_rows = $metrics.preferred_join_rows
             acceptable_fallback_join_rows = $metrics.acceptable_fallback_join_rows
             bad_legacy_join_rows = $metrics.bad_legacy_join_rows
+            bad_legacy_join_rows_raw = $metrics.bad_legacy_join_rows_raw
+            bad_legacy_join_rows_excluded = $metrics.bad_legacy_join_rows_excluded
+            bad_legacy_join_rows_actionable = $metrics.bad_legacy_join_rows_actionable
             minimum_preferred_join_rows = $metrics.minimum_preferred_join_rows
             maximum_bad_legacy_join_rows = $metrics.maximum_bad_legacy_join_rows
             epg_program_count = $metrics.epg_program_count
@@ -650,7 +730,7 @@ try {
         } `
         -LogRoot $LogRoot | Out-Null
 
-    Write-Output "OK: EPG join validation completed. status=$($metrics.status) result=$($metrics.epg_join_validation_status) preferred_join_rows=$($metrics.preferred_join_rows) bad_legacy_join_rows=$($metrics.bad_legacy_join_rows) mode=$Mode run_id=$script:RunId"
+    Write-Output "OK: EPG join validation completed. status=$($metrics.status) result=$($metrics.epg_join_validation_status) preferred_join_rows=$($metrics.preferred_join_rows) bad_legacy_join_rows_actionable=$($metrics.bad_legacy_join_rows_actionable) bad_legacy_join_rows_raw=$($metrics.bad_legacy_join_rows_raw) bad_legacy_join_rows_excluded=$($metrics.bad_legacy_join_rows_excluded) mode=$Mode run_id=$script:RunId"
     exit 0
 }
 catch {
