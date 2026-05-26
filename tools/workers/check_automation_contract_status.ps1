@@ -274,6 +274,13 @@ try {
             Recurring = $true
             RequiredSignals = @("cache_served_from", "stale_ratio_by_screen", "worker_heartbeat_status")
             RequiredKillSwitch = "ENABLE_ASYNC_CACHE_REFRESH"
+        },
+        @{
+            Name = "run_db_quality_gates"
+            Path = "tools\workers\run_db_quality_gates.ps1"
+            Recurring = $true
+            RequiredSignals = @("quality_gate_result", "duplicate_ratio", "blank_key_ratio", "filter_diversity_score", "worker_heartbeat_status")
+            RequiredKillSwitch = "ENABLE_DB_QUALITY_GATE_AUTOMATION"
         }
     )
 
