@@ -260,6 +260,13 @@ try {
             Recurring = $true
             RequiredSignals = @("epg_freshness_age_hours", "worker_heartbeat_status")
             RequiredKillSwitch = "ENABLE_EPG_IMPORT"
+        },
+        @{
+            Name = "check_epg_join_validation"
+            Path = "tools\workers\check_epg_join_validation.ps1"
+            Recurring = $true
+            RequiredSignals = @("epg_join_validation_status", "worker_heartbeat_status")
+            RequiredKillSwitch = "ENABLE_EPG_JOIN_GATE"
         }
     )
 
