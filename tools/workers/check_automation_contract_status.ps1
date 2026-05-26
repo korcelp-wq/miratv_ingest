@@ -281,6 +281,13 @@ try {
             Recurring = $true
             RequiredSignals = @("quality_gate_result", "duplicate_ratio", "blank_key_ratio", "filter_diversity_score", "worker_heartbeat_status")
             RequiredKillSwitch = "ENABLE_DB_QUALITY_GATE_AUTOMATION"
+        },
+   	@{
+            Name = "check_materialization_queue"
+            Path = "tools\workers\check_materialization_queue.ps1"
+            Recurring = $true
+            RequiredSignals = @("materialization_queue_oldest_age_minutes", "materialization_dead_letter_count", "materialization_requeue_rate", "worker_heartbeat_status")
+            RequiredKillSwitch = "ENABLE_MATERIALIZATION_CONSUMERS"
         }
     )
 
