@@ -65,7 +65,7 @@ if (!function_exists('miratv_release_db_handles')) {
 header('Content-Type: application/json; charset=utf-8');
 
 /*
- * MiraTV Step 6B-5E6 - Series Metadata Queue Processor
+ * MiraTV Step 6B-5E8 - Series Metadata Queue Processor
  *
  * Target path:
  *   /home/xpdgxfsp/public_html/_workers/ai/api/process_series_metadata_queue.php
@@ -87,6 +87,7 @@ header('Content-Type: application/json; charset=utf-8');
  *   - include_unmatched_local=1 adds unmatched_series_local_row_created to the normal reason list.
  *   - only_unmatched_local=1 restricts the processor to only unmatched_series_local_row_created.
  *   - only_series_shelf_missing=1 restricts the processor to only series_shelf_missing_images.
+ *   - only_series_port_900_image_repair=1 restricts the processor to only series_port_900_image_repair.
  *
  * Partial completion policy:
  *   - For only_unmatched_local=1 rows, a successful TMDb materialization that writes useful metadata
@@ -94,7 +95,7 @@ header('Content-Type: application/json; charset=utf-8');
  *   - TMDB_NO_MATCH still remains queued/failed/manual according to normal retry rules.
  */
 
-const ENDPOINT_VERSION = '6B-5E6-2026-05-27-series-shelf-poster-completion';
+const ENDPOINT_VERSION = '6B-5E8-2026-05-27-port-900-non-port-validation';
 
 function json_response(array $payload, int $statusCode = 200): void
 {
@@ -220,7 +221,8 @@ function get_queue_rows(
     bool $includePreviewMissing,
     bool $includeUnmatchedLocal,
     bool $onlyUnmatchedLocal,
-    bool $onlySeriesShelfMissing
+    bool $onlySeriesShelfMissing,
+    bool $onlySeriesPort900ImageRepair
 ): array {
     if ($queueId !== null && $queueId > 0) {
         $sql = "
@@ -240,6 +242,8 @@ function get_queue_rows(
         $reasons = ["'unmatched_series_local_row_created'"];
     } elseif ($onlySeriesShelfMissing) {
         $reasons = ["'series_shelf_missing_images'"];
+    } elseif ($onlySeriesPort900ImageRepair) {
+        $reasons = ["'series_port_900_image_repair'"];
     } else {
         $reasons = ["'missing_series_images_scan'", "'series_shelf_missing_images'"];
 
@@ -488,6 +492,108 @@ function series_shelf_has_usable_artwork_or_metadata(array $imageState, array $m
     return false;
 }
 
+
+function is_port_900_artwork_url(?string $url): bool
+{
+    $url = first_non_blank($url);
+    if ($url === null) {
+        return false;
+    }
+
+    $lower = strtolower($url);
+
+    if (strpos($lower, ':900/') !== false || strpos($lower, ':9000/') !== false) {
+        return true;
+    }
+
+    $parts = @parse_url($url);
+    if (is_array($parts) && isset($parts['port']) && (int)$parts['port'] === 900) {
+        return true;
+    }
+
+    return false;
+}
+
+function is_known_bad_provider_artwork_url(?string $url): bool
+{
+    $url = first_non_blank($url);
+    if ($url === null) {
+        return false;
+    }
+
+    $lower = strtolower($url);
+
+    if (is_port_900_artwork_url($lower)) {
+        return true;
+    }
+
+    // Known provider artwork paths that have proven unavailable/unstable for app display.
+    if (preg_match('#^https?://[^/]+/images/#i', $lower) && !is_tmdb_artwork_url($lower)) {
+        return true;
+    }
+
+    return false;
+}
+
+function is_tmdb_artwork_url(?string $url): bool
+{
+    $url = first_non_blank($url);
+    if ($url === null) {
+        return false;
+    }
+
+    return stripos($url, 'https://image.tmdb.org/') === 0 || stripos($url, 'http://image.tmdb.org/') === 0;
+}
+
+function is_safe_replacement_artwork_url(?string $url): bool
+{
+    $url = first_non_blank($url);
+    if ($url === null) {
+        return false;
+    }
+
+    if (is_known_bad_provider_artwork_url($url)) {
+        return false;
+    }
+
+    if (is_tmdb_artwork_url($url)) {
+        return true;
+    }
+
+    // Allow future non-provider HTTPS artwork sources, but do not allow port-900/provider image paths.
+    return stripos($url, 'https://') === 0;
+}
+
+function series_port_900_has_safe_replacement_artwork(array $imageState, array $materializerJson): bool
+{
+    if (is_safe_replacement_artwork_url($imageState['poster_url'] ?? null)) {
+        return true;
+    }
+
+    if (is_safe_replacement_artwork_url($imageState['backdrop_url'] ?? null)) {
+        return true;
+    }
+
+    $written = $materializerJson['written'] ?? null;
+    if (!is_array($written)) {
+        return false;
+    }
+
+    if (is_safe_replacement_artwork_url($written['poster_url'] ?? null)) {
+        return true;
+    }
+
+    if (is_safe_replacement_artwork_url($written['backdrop_url'] ?? null)) {
+        return true;
+    }
+
+    if (is_safe_replacement_artwork_url($written['backdrop_original_url'] ?? null)) {
+        return true;
+    }
+
+    return false;
+}
+
 function update_queue_started(PDO $pdo, int $queueId): void
 {
     $sql = "
@@ -647,6 +753,7 @@ try {
     $includeUnmatchedLocal = (int)($_GET['include_unmatched_local'] ?? 0) === 1;
     $onlyUnmatchedLocal = (int)($_GET['only_unmatched_local'] ?? 0) === 1;
     $onlySeriesShelfMissing = (int)($_GET['only_series_shelf_missing'] ?? 0) === 1;
+    $onlySeriesPort900ImageRepair = (int)($_GET['only_series_port_900_image_repair'] ?? 0) === 1;
 
     $pdo = open_pdo();
     $rows = get_queue_rows(
@@ -656,7 +763,8 @@ try {
         $includePreviewMissing,
         $includeUnmatchedLocal,
         $onlyUnmatchedLocal,
-        $onlySeriesShelfMissing
+        $onlySeriesShelfMissing,
+        $onlySeriesPort900ImageRepair
     );
 
     $items = [];
@@ -778,13 +886,22 @@ try {
                 && series_shelf_has_usable_artwork_or_metadata($imageState, $call['json'])
             );
 
-            if ($useUnmatchedPartialCompletion || $useShelfPosterCompletion) {
+            $usePort900ReplacementCompletion = (
+                $onlySeriesPort900ImageRepair
+                && clean($queueRow['trigger_reason'] ?? '') === 'series_port_900_image_repair'
+                && series_port_900_has_safe_replacement_artwork($imageState, $call['json'])
+            );
+
+            if ($useUnmatchedPartialCompletion || $useShelfPosterCompletion || $usePort900ReplacementCompletion) {
                 update_queue_completed($pdo, $queueIdValue);
                 $completed++;
                 $partialCompleted++;
                 $item['queue_status'] = 'completed';
 
-                if ($useShelfPosterCompletion) {
+                if ($usePort900ReplacementCompletion) {
+                    $item['completion_policy'] = 'partial_port_900_artwork_replaced';
+                    $item['completion_note'] = 'Port 900 artwork was treated as replace-only; a safe non-port-900 poster/backdrop replacement was present after materialization, so the row completed even if other requested image fields remain unavailable.';
+                } elseif ($useShelfPosterCompletion) {
                     $item['completion_policy'] = 'partial_series_shelf_poster_completed';
                     $item['completion_note'] = 'Series shelf image repair wrote usable poster artwork or useful shelf metadata; completed even though requested backdrop remains unavailable.';
                 } else {
@@ -799,6 +916,7 @@ try {
             $preferManualForMissingImages = in_array(clean($queueRow['trigger_reason'] ?? ''), [
                 'series_shelf_missing_images',
                 'missing_series_images_scan',
+                'series_port_900_image_repair',
             ], true);
 
             $status = update_queue_retry_or_failed(
@@ -833,6 +951,7 @@ try {
         'include_unmatched_local' => $includeUnmatchedLocal,
         'only_unmatched_local' => $onlyUnmatchedLocal,
         'only_series_shelf_missing' => $onlySeriesShelfMissing,
+        'only_series_port_900_image_repair' => $onlySeriesPort900ImageRepair,
         'found_count' => count($rows),
         'completed_count' => $completed,
         'partial_completed_count' => $partialCompleted,
