@@ -1,15 +1,19 @@
 # MiraTV Playback Preflight Attribution Worker
 # File: tools/workers/check_playback_preflight_attribution.ps1
 # Purpose:
-#   P0.7 playback preflight attribution scaffold.
-#   Establishes observable checks for playback preflight outcomes and attribution coverage.
+#   P0.7 playback preflight attribution scaffold + read-only DB-backed mode.
+#   Establishes observable playback attribution coverage checks without mutating database tables.
 #
 # Current implementation:
-#   - Local-first, no DB writes yet.
-#   - Supports DryRun and SnapshotInput modes.
-#   - Emits playback attribution and worker heartbeat signals.
-#   - Does not mutate playback, availability, or attribution tables.
-#   - Designed to be extended with DB/query bridge checks later.
+#   - Supports DryRun, SnapshotInput, and DbQuery modes.
+#   - DbQuery mode uses tools/common/DbQuery.psm1, which calls dog_open_proc.php.
+#   - DbQuery mode adaptively discovers available Live/VOD/Series source tables and columns.
+#   - Does not mutate database tables.
+#
+# Playback attribution philosophy:
+#   Playback must be attributable before the client launches a player.
+#   At minimum, playable inventory should be traceable to provider id/stream id context.
+#   VOD/Series should also be able to resolve container/extension where available.
 #
 # Signals:
 #   - playback_preflight_outcome
@@ -19,14 +23,15 @@
 # Kill switch:
 #   - ENABLE_PLAYBACK_ATTRIBUTION
 #
+# Required for DbQuery mode:
+#   $env:DOG_OPEN_PROC_ENDPOINT = "https://miratv.club/_workers/api/series/dog_open_proc.php"
+#   $env:DOG_OPEN_PROC_TOKEN = "<token>"
+#
 # Usage:
 #   pwsh -NoProfile -ExecutionPolicy Bypass -File "tools/workers/check_playback_preflight_attribution.ps1" -Environment "dev"
 #
-# Optional snapshot input:
-#   pwsh -NoProfile -ExecutionPolicy Bypass -File "tools/workers/check_playback_preflight_attribution.ps1" `
-#     -Environment "dev" `
-#     -Mode "SnapshotInput" `
-#     -InputJsonPath "runtime/samples/playback_preflight_attribution_snapshot.json"
+# DbQuery:
+#   pwsh -NoProfile -ExecutionPolicy Bypass -File "tools/workers/check_playback_preflight_attribution.ps1" -Environment "dev" -Mode "DbQuery"
 
 [CmdletBinding()]
 param(
@@ -35,15 +40,18 @@ param(
     [string]$Environment = "prod",
     [string]$KillSwitchName = "ENABLE_PLAYBACK_ATTRIBUTION",
 
-    [ValidateSet("DryRun", "SnapshotInput")]
+    [ValidateSet("DryRun", "SnapshotInput", "DbQuery")]
     [string]$Mode = "DryRun",
 
     [string]$InputJsonPath = "",
-    [string]$MediaType = "",
-    [decimal]$MinimumAttributionCoveragePercent = 95,
-    [decimal]$MaxUnknownOutcomeRatio = 0.05,
-    [int]$HeartbeatIntervalSeconds = 900,
-    [int]$StaleAfterSeconds = 3600,
+    [string]$DatabaseKey = "content",
+    [string]$DbQueryEndpoint = "",
+    [string]$DbQueryToken = "",
+    [int]$QueryTimeoutSec = 30,
+
+    [decimal]$MinimumCoveragePercent = 95.0,
+    [int]$HeartbeatIntervalSeconds = 1800,
+    [int]$StaleAfterSeconds = 7200,
     [string]$LogRoot = ""
 )
 
@@ -115,7 +123,7 @@ function Read-PlaybackSnapshot {
     return $raw | ConvertFrom-Json -ErrorAction Stop
 }
 
-function Convert-ToArray {
+function Convert-ToArraySafe {
     [CmdletBinding()]
     param(
         [AllowNull()]
@@ -199,7 +207,7 @@ function Convert-ToDecimalSafe {
     return $DefaultValue
 }
 
-function Get-PlaybackRows {
+function Get-SnapshotMetricRow {
     [CmdletBinding()]
     param(
         [AllowNull()]
@@ -207,225 +215,555 @@ function Get-PlaybackRows {
     )
 
     if ($null -eq $Snapshot) {
-        return @()
+        return $null
     }
 
-    if ($Snapshot.PSObject.Properties.Name -contains "events") {
-        return Convert-ToArray -Value $Snapshot.events
+    if ($Snapshot.PSObject.Properties.Name -contains "metrics") {
+        $rows = Convert-ToArraySafe -Value $Snapshot.metrics
+        if ($rows.Count -gt 0) {
+            return $rows[0]
+        }
     }
 
-    if ($Snapshot.PSObject.Properties.Name -contains "items") {
-        return Convert-ToArray -Value $Snapshot.items
+    if ($Snapshot.PSObject.Properties.Name -contains "rows") {
+        $rows = Convert-ToArraySafe -Value $Snapshot.rows
+        if ($rows.Count -gt 0) {
+            return $rows[0]
+        }
     }
 
-    if ($Snapshot.PSObject.Properties.Name -contains "playback_events") {
-        return Convert-ToArray -Value $Snapshot.playback_events
+    if ($Snapshot.PSObject.Properties.Name -contains "result") {
+        $rows = Convert-ToArraySafe -Value $Snapshot.result
+        if ($rows.Count -gt 0) {
+            return $rows[0]
+        }
     }
 
-    if ($Snapshot.PSObject.Properties.Name -contains "results") {
-        return Convert-ToArray -Value $Snapshot.results
+    if ($Snapshot.PSObject.Properties.Name -contains "playback") {
+        $rows = Convert-ToArraySafe -Value $Snapshot.playback
+        if ($rows.Count -gt 0) {
+            return $rows[0]
+        }
     }
 
-    return Convert-ToArray -Value $Snapshot
+    return $Snapshot
 }
 
-function Normalize-PlaybackOutcome {
+function Escape-SqlIdentifier {
     [CmdletBinding()]
     param(
-        [AllowNull()]
-        [object]$Value
+        [Parameter(Mandatory = $true)]
+        [string]$Name
     )
 
-    if ($null -eq $Value) {
-        return "unknown"
+    if ($Name -notmatch "^[A-Za-z0-9_]+$") {
+        throw "Unsafe SQL identifier: $Name"
     }
 
-    $raw = ([string]$Value).Trim().ToLowerInvariant()
+    return "``$Name``"
+}
 
-    if ([string]::IsNullOrWhiteSpace($raw)) {
-        return "unknown"
+function Get-TableDiscoverySql {
+    [CmdletBinding()]
+    param()
+
+    return @"
+SELECT
+    t.TABLE_NAME AS table_name,
+    c.COLUMN_NAME AS column_name
+FROM information_schema.TABLES t
+LEFT JOIN information_schema.COLUMNS c
+    ON c.TABLE_SCHEMA = t.TABLE_SCHEMA
+   AND c.TABLE_NAME = t.TABLE_NAME
+WHERE t.TABLE_SCHEMA = DATABASE()
+  AND t.TABLE_NAME IN (
+      'live_channels',
+      'vod',
+      'series',
+      'series_episodes',
+      'episodes',
+      'vod_metadata_ext',
+      'series_metadata_ext'
+  )
+ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION
+"@
+}
+
+function Get-PreferredColumn {
+    [CmdletBinding()]
+    param(
+        [string[]]$ColumnNames,
+        [string[]]$PreferredNames
+    )
+
+    foreach ($candidate in $PreferredNames) {
+        if ($ColumnNames -contains $candidate) {
+            return $candidate
+        }
     }
 
-    switch -Regex ($raw) {
-        "^(ok|playable|success|resolved|can_play)$" {
-            return "playable"
+    return ""
+}
+
+function Get-NonBlankSqlExpression {
+    [CmdletBinding()]
+    param(
+        [string]$ColumnName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ColumnName)) {
+        return "0"
+    }
+
+    $safe = Escape-SqlIdentifier -Name $ColumnName
+    return "($safe IS NOT NULL AND TRIM(CAST($safe AS CHAR)) <> '')"
+}
+
+function Get-ActiveWhereExpression {
+    [CmdletBinding()]
+    param(
+        [string[]]$ColumnNames
+    )
+
+    $activeColumn = Get-PreferredColumn -ColumnNames $ColumnNames -PreferredNames @(
+        "is_active",
+        "active",
+        "enabled"
+    )
+
+    if ([string]::IsNullOrWhiteSpace($activeColumn)) {
+        return "1 = 1"
+    }
+
+    $safeActive = Escape-SqlIdentifier -Name $activeColumn
+    return "COALESCE($safeActive, 1) = 1"
+}
+
+function Get-LivePlaybackMetricSql {
+    [CmdletBinding()]
+    param(
+        [string[]]$ColumnNames
+    )
+
+    $providerIdColumn = Get-PreferredColumn -ColumnNames $ColumnNames -PreferredNames @(
+        "provider_stream_id",
+        "stream_id",
+        "provider_id",
+        "id"
+    )
+
+    $nameColumn = Get-PreferredColumn -ColumnNames $ColumnNames -PreferredNames @(
+        "name",
+        "title",
+        "channel_name"
+    )
+
+    $containerColumn = Get-PreferredColumn -ColumnNames $ColumnNames -PreferredNames @(
+        "stream_type",
+        "container_extension",
+        "container",
+        "extension"
+    )
+
+    $httpStatusColumn = Get-PreferredColumn -ColumnNames $ColumnNames -PreferredNames @(
+        "last_http_status",
+        "http_status",
+        "last_playback_status"
+    )
+
+    $providerIdNonBlank = Get-NonBlankSqlExpression -ColumnName $providerIdColumn
+    $nameNonBlank = Get-NonBlankSqlExpression -ColumnName $nameColumn
+    $containerNonBlank = Get-NonBlankSqlExpression -ColumnName $containerColumn
+    $where = Get-ActiveWhereExpression -ColumnNames $ColumnNames
+
+    $blocked406Expr = "0"
+    if (-not [string]::IsNullOrWhiteSpace($httpStatusColumn)) {
+        $safeHttp = Escape-SqlIdentifier -Name $httpStatusColumn
+        $blocked406Expr = "SUM(CASE WHEN CAST($safeHttp AS CHAR) = '406' THEN 1 ELSE 0 END)"
+    }
+
+    return @"
+SELECT
+    'live' AS media_type,
+    COUNT(*) AS total_candidates,
+    SUM(CASE WHEN $providerIdNonBlank AND $nameNonBlank THEN 1 ELSE 0 END) AS attributed_count,
+    SUM(CASE WHEN NOT ($providerIdNonBlank) THEN 1 ELSE 0 END) AS missing_provider_id_count,
+    0 AS missing_container_count,
+    SUM(CASE WHEN $containerNonBlank THEN 1 ELSE 0 END) AS container_known_count,
+    $blocked406Expr AS blocked_406_count
+FROM live_channels
+WHERE $where
+"@
+}
+
+function Get-VodPlaybackMetricSql {
+    [CmdletBinding()]
+    param(
+        [string[]]$ColumnNames
+    )
+
+    $providerIdColumn = Get-PreferredColumn -ColumnNames $ColumnNames -PreferredNames @(
+        "provider_vod_id",
+        "vod_id",
+        "stream_id",
+        "provider_id",
+        "id"
+    )
+
+    $titleColumn = Get-PreferredColumn -ColumnNames $ColumnNames -PreferredNames @(
+        "title",
+        "name",
+        "movie_name"
+    )
+
+    $containerColumn = Get-PreferredColumn -ColumnNames $ColumnNames -PreferredNames @(
+        "container_extension",
+        "container",
+        "extension",
+        "stream_type"
+    )
+
+    $httpStatusColumn = Get-PreferredColumn -ColumnNames $ColumnNames -PreferredNames @(
+        "last_http_status",
+        "http_status",
+        "last_playback_status"
+    )
+
+    $providerIdNonBlank = Get-NonBlankSqlExpression -ColumnName $providerIdColumn
+    $titleNonBlank = Get-NonBlankSqlExpression -ColumnName $titleColumn
+    $containerNonBlank = Get-NonBlankSqlExpression -ColumnName $containerColumn
+    $where = Get-ActiveWhereExpression -ColumnNames $ColumnNames
+
+    $blocked406Expr = "0"
+    if (-not [string]::IsNullOrWhiteSpace($httpStatusColumn)) {
+        $safeHttp = Escape-SqlIdentifier -Name $httpStatusColumn
+        $blocked406Expr = "SUM(CASE WHEN CAST($safeHttp AS CHAR) = '406' THEN 1 ELSE 0 END)"
+    }
+
+    return @"
+SELECT
+    'vod' AS media_type,
+    COUNT(*) AS total_candidates,
+    SUM(CASE WHEN $providerIdNonBlank AND $titleNonBlank THEN 1 ELSE 0 END) AS attributed_count,
+    SUM(CASE WHEN NOT ($providerIdNonBlank) THEN 1 ELSE 0 END) AS missing_provider_id_count,
+    SUM(CASE WHEN NOT ($containerNonBlank) THEN 1 ELSE 0 END) AS missing_container_count,
+    SUM(CASE WHEN $containerNonBlank THEN 1 ELSE 0 END) AS container_known_count,
+    $blocked406Expr AS blocked_406_count
+FROM vod
+WHERE $where
+"@
+}
+
+function Get-SeriesPlaybackMetricSql {
+    [CmdletBinding()]
+    param(
+        [string[]]$ColumnNames
+    )
+
+    $providerIdColumn = Get-PreferredColumn -ColumnNames $ColumnNames -PreferredNames @(
+        "provider_series_id",
+        "series_id",
+        "stream_id",
+        "provider_id",
+        "id"
+    )
+
+    $titleColumn = Get-PreferredColumn -ColumnNames $ColumnNames -PreferredNames @(
+        "title",
+        "name",
+        "series_name"
+    )
+
+    $containerColumn = Get-PreferredColumn -ColumnNames $ColumnNames -PreferredNames @(
+        "container_extension",
+        "container",
+        "extension",
+        "stream_type"
+    )
+
+    $httpStatusColumn = Get-PreferredColumn -ColumnNames $ColumnNames -PreferredNames @(
+        "last_http_status",
+        "http_status",
+        "last_playback_status"
+    )
+
+    $providerIdNonBlank = Get-NonBlankSqlExpression -ColumnName $providerIdColumn
+    $titleNonBlank = Get-NonBlankSqlExpression -ColumnName $titleColumn
+    $containerNonBlank = Get-NonBlankSqlExpression -ColumnName $containerColumn
+    $where = Get-ActiveWhereExpression -ColumnNames $ColumnNames
+
+    $blocked406Expr = "0"
+    if (-not [string]::IsNullOrWhiteSpace($httpStatusColumn)) {
+        $safeHttp = Escape-SqlIdentifier -Name $httpStatusColumn
+        $blocked406Expr = "SUM(CASE WHEN CAST($safeHttp AS CHAR) = '406' THEN 1 ELSE 0 END)"
+    }
+
+    return @"
+SELECT
+    'series' AS media_type,
+    COUNT(*) AS total_candidates,
+    SUM(CASE WHEN $providerIdNonBlank AND $titleNonBlank THEN 1 ELSE 0 END) AS attributed_count,
+    SUM(CASE WHEN NOT ($providerIdNonBlank) THEN 1 ELSE 0 END) AS missing_provider_id_count,
+    SUM(CASE WHEN NOT ($containerNonBlank) THEN 1 ELSE 0 END) AS missing_container_count,
+    SUM(CASE WHEN $containerNonBlank THEN 1 ELSE 0 END) AS container_known_count,
+    $blocked406Expr AS blocked_406_count
+FROM series
+WHERE $where
+"@
+}
+
+function Get-PlaybackMetricDbRow {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+
+        [string]$DatabaseKey = "content",
+
+        [string]$Endpoint = "",
+
+        [string]$Token = "",
+
+        [int]$TimeoutSec = 30
+    )
+
+    $dbQueryModule = Join-Path $RepoRoot "tools\common\DbQuery.psm1"
+
+    if (-not (Test-Path -LiteralPath $dbQueryModule)) {
+        throw "DbQuery module not found at: $dbQueryModule"
+    }
+
+    Import-Module $dbQueryModule -Force
+
+    $discoveryResult = Invoke-ReadOnlyDbQuery `
+        -DatabaseKey $DatabaseKey `
+        -Sql (Get-TableDiscoverySql) `
+        -Endpoint $Endpoint `
+        -Token $Token `
+        -TimeoutSec $TimeoutSec
+
+    $discoveryRows = Convert-ToArraySafe -Value $discoveryResult.rows
+    $tableMap = @{}
+
+    foreach ($row in $discoveryRows) {
+        $tableName = Get-PropertyValue -Object $row -Names @("table_name", "TABLE_NAME")
+        $columnName = Get-PropertyValue -Object $row -Names @("column_name", "COLUMN_NAME")
+
+        if ($null -eq $tableName -or [string]::IsNullOrWhiteSpace([string]$tableName)) {
+            continue
         }
-        "^(unavailable|not_available|provider_unavailable|gone)$" {
-            return "unavailable"
+
+        $tableNameText = ([string]$tableName).Trim()
+
+        if ($tableNameText -notmatch "^[A-Za-z0-9_]+$") {
+            continue
         }
-        "^(stale_id|stale|missing_provider_id|id_stale)$" {
-            return "stale_id"
+
+        if (-not $tableMap.ContainsKey($tableNameText)) {
+            $tableMap[$tableNameText] = New-Object System.Collections.Generic.List[string]
         }
-        "^(bouquet_denied|bouquet|access_denied|entitlement_denied|not_entitled|denied)$" {
-            return "bouquet_denied"
-        }
-        "^(provider_error|provider_failed|upstream_error|http_5xx)$" {
-            return "provider_error"
-        }
-        "^(container_unsupported|unsupported_container|codec_unsupported|unsupported_codec)$" {
-            return "container_unsupported"
-        }
-        "^(resolver_error|resolver_failed|preflight_error|exception)$" {
-            return "resolver_error"
-        }
-        "^(timeout|network_timeout)$" {
-            return "provider_error"
-        }
-        "^(406|http_406)$" {
-            return "bouquet_denied"
-        }
-        "^(404|http_404)$" {
-            return "unavailable"
-        }
-        default {
-            return "unknown"
+
+        if ($null -ne $columnName -and -not [string]::IsNullOrWhiteSpace([string]$columnName)) {
+            $columnNameText = ([string]$columnName).Trim()
+            if ($columnNameText -match "^[A-Za-z0-9_]+$") {
+                $tableMap[$tableNameText].Add($columnNameText) | Out-Null
+            }
         }
     }
+
+    $parts = @()
+
+    if ($tableMap.ContainsKey("live_channels")) {
+        $parts += Get-LivePlaybackMetricSql -ColumnNames @($tableMap["live_channels"].ToArray())
+    }
+
+    if ($tableMap.ContainsKey("vod")) {
+        $parts += Get-VodPlaybackMetricSql -ColumnNames @($tableMap["vod"].ToArray())
+    }
+
+    if ($tableMap.ContainsKey("series")) {
+        $parts += Get-SeriesPlaybackMetricSql -ColumnNames @($tableMap["series"].ToArray())
+    }
+
+    if ($parts.Count -eq 0) {
+        return [pscustomobject]@{
+            total_playback_candidates = 0
+            attributed_count = 0
+            unattributed_count = 0
+            missing_provider_id_count = 0
+            missing_container_count = 0
+            container_known_count = 0
+            blocked_406_count = 0
+            coverage_percent = 0
+            source_table_count = 0
+        }
+    }
+
+    $unionSql = $parts -join "`nUNION ALL`n"
+
+    $metricSql = @"
+SELECT
+    SUM(total_candidates) AS total_playback_candidates,
+    SUM(attributed_count) AS attributed_count,
+    SUM(total_candidates - attributed_count) AS unattributed_count,
+    SUM(missing_provider_id_count) AS missing_provider_id_count,
+    SUM(missing_container_count) AS missing_container_count,
+    SUM(container_known_count) AS container_known_count,
+    SUM(blocked_406_count) AS blocked_406_count,
+    COUNT(*) AS source_table_count,
+    CASE
+        WHEN SUM(total_candidates) > 0 THEN ROUND((SUM(attributed_count) / SUM(total_candidates)) * 100, 3)
+        ELSE 0
+    END AS coverage_percent
+FROM
+(
+$unionSql
+) playback_metrics
+"@
+
+    $queryResult = Invoke-ReadOnlyDbQuery `
+        -DatabaseKey $DatabaseKey `
+        -Sql $metricSql `
+        -Endpoint $Endpoint `
+        -Token $Token `
+        -TimeoutSec $TimeoutSec
+
+    if ($null -eq $queryResult) {
+        throw "DbQuery returned null result."
+    }
+
+    if (-not ($queryResult.PSObject.Properties.Name -contains "rows")) {
+        throw "DbQuery result did not include rows."
+    }
+
+    $rows = Convert-ToArraySafe -Value $queryResult.rows
+
+    if ($rows.Count -eq 0) {
+        throw "DbQuery returned zero rows for playback preflight attribution query."
+    }
+
+    return $rows[0]
 }
 
 function Get-PlaybackMetrics {
     [CmdletBinding()]
     param(
         [AllowNull()]
-        [object]$Snapshot,
+        [object]$MetricRow,
 
-        [string]$MediaType,
+        [string]$Mode,
 
-        [decimal]$MinimumAttributionCoveragePercent,
+        [decimal]$MinimumCoveragePercent,
 
-        [decimal]$MaxUnknownOutcomeRatio
+        [string]$SourceName
     )
 
-    $rows = Get-PlaybackRows -Snapshot $Snapshot
-
-    if (-not [string]::IsNullOrWhiteSpace($MediaType)) {
-        $rows = @(
-            $rows | Where-Object {
-                $mediaRaw = Get-PropertyValue -Object $_ -Names @("media_type", "content_type", "type")
-                ([string]$mediaRaw).Trim().ToLowerInvariant() -eq $MediaType.Trim().ToLowerInvariant()
-            }
-        )
-    }
-
-    $totalEvents = @($rows).Count
-    $attributedEvents = 0
-    $unknownEvents = 0
-    $playableCount = 0
-    $unavailableCount = 0
-    $staleIdCount = 0
-    $bouquetDeniedCount = 0
-    $providerErrorCount = 0
-    $containerUnsupportedCount = 0
-    $resolverErrorCount = 0
-
-    $outcomeCounts = @{
-        playable = 0
-        unavailable = 0
-        stale_id = 0
-        bouquet_denied = 0
-        provider_error = 0
-        container_unsupported = 0
-        resolver_error = 0
-        unknown = 0
-    }
-
-    foreach ($row in $rows) {
-        $outcomeRaw = Get-PropertyValue -Object $row -Names @(
-            "playback_preflight_outcome",
-            "preflight_outcome",
-            "outcome",
-            "attribution",
-            "result",
-            "status"
-        )
-
-        $outcome = Normalize-PlaybackOutcome -Value $outcomeRaw
-
-        if (-not $outcomeCounts.ContainsKey($outcome)) {
-            $outcome = "unknown"
-        }
-
-        $outcomeCounts[$outcome] = [int]$outcomeCounts[$outcome] + 1
-
-        if ($outcome -ne "unknown") {
-            $attributedEvents++
-        }
-        else {
-            $unknownEvents++
-        }
-    }
-
-    $playableCount = [int]$outcomeCounts["playable"]
-    $unavailableCount = [int]$outcomeCounts["unavailable"]
-    $staleIdCount = [int]$outcomeCounts["stale_id"]
-    $bouquetDeniedCount = [int]$outcomeCounts["bouquet_denied"]
-    $providerErrorCount = [int]$outcomeCounts["provider_error"]
-    $containerUnsupportedCount = [int]$outcomeCounts["container_unsupported"]
-    $resolverErrorCount = [int]$outcomeCounts["resolver_error"]
-
-    $coveragePercent = [decimal]0
-    $unknownRatio = [decimal]0
-
-    if ($totalEvents -gt 0) {
-        $coveragePercent = [decimal]::Round(([decimal]$attributedEvents / [decimal]$totalEvents) * 100, 2)
-        $unknownRatio = [decimal]::Round(([decimal]$unknownEvents / [decimal]$totalEvents), 4)
-    }
-
-    $dominantOutcome = "dry_run"
-
-    if ($totalEvents -gt 0) {
-        $dominantOutcome = [string](
-            $outcomeCounts.GetEnumerator() |
-                Sort-Object -Property Value -Descending |
-                Select-Object -First 1
-        ).Name
-    }
-
     $status = "dry_run"
-    $note = "local-first scaffold; no DB query performed"
+    $playbackOutcome = "dry_run"
+    $totalPlaybackCandidates = 0
+    $attributedCount = 0
+    $unattributedCount = 0
+    $missingProviderIdCount = 0
+    $missingContainerCount = 0
+    $containerKnownCount = 0
+    $blocked406Count = 0
+    $sourceTableCount = 0
+    $coveragePercent = [decimal]0
+    $validationNote = "local-first scaffold; no DB query performed"
 
-    if ($null -ne $Snapshot) {
+    if ($null -ne $MetricRow) {
+        $totalPlaybackCandidates = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "total_playback_candidates",
+            "total_candidates",
+            "candidate_count"
+        ))
+
+        $attributedCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "attributed_count",
+            "attributed_rows"
+        ))
+
+        $unattributedCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "unattributed_count",
+            "unattributed_rows"
+        ))
+
+        $missingProviderIdCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "missing_provider_id_count",
+            "missing_provider_count"
+        ))
+
+        $missingContainerCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "missing_container_count",
+            "missing_extension_count"
+        ))
+
+        $containerKnownCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "container_known_count",
+            "container_resolved_count"
+        ))
+
+        $blocked406Count = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "blocked_406_count",
+            "http_406_count"
+        ))
+
+        $sourceTableCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "source_table_count",
+            "table_count"
+        ))
+
+        $coveragePercent = Convert-ToDecimalSafe -Value (Get-PropertyValue -Object $MetricRow -Names @(
+            "coverage_percent",
+            "attribution_coverage_percent"
+        ))
+
+        if ($totalPlaybackCandidates -gt 0) {
+            if ($unattributedCount -eq 0 -and $attributedCount -lt $totalPlaybackCandidates) {
+                $unattributedCount = $totalPlaybackCandidates - $attributedCount
+            }
+
+            if ($coveragePercent -eq 0 -and $attributedCount -gt 0) {
+                $coveragePercent = [decimal]::Round(([decimal]$attributedCount / [decimal]$totalPlaybackCandidates) * 100, 3)
+            }
+        }
+
         $status = "ok"
-        $note = "playback preflight attribution metrics within configured thresholds"
+        $playbackOutcome = "pass"
+        $validationNote = "playback attribution coverage is within configured threshold"
 
-        if ($totalEvents -eq 0) {
+        if ($sourceTableCount -le 0 -or $totalPlaybackCandidates -le 0) {
             $status = "warning"
-            $note = "no playback preflight events found for evaluated scope"
+            $playbackOutcome = "warning"
+            $validationNote = "no playback candidate source rows were found"
         }
-        elseif ($coveragePercent -lt $MinimumAttributionCoveragePercent) {
+        elseif ($coveragePercent -lt $MinimumCoveragePercent) {
             $status = "warning"
-            $note = "attribution coverage below configured threshold"
-        }
-        elseif ($unknownRatio -gt $MaxUnknownOutcomeRatio) {
-            $status = "warning"
-            $note = "unknown outcome ratio above configured threshold"
-        }
-        elseif ($resolverErrorCount -gt 0) {
-            $status = "warning"
-            $note = "resolver errors detected"
+            $playbackOutcome = "warning"
+            $validationNote = "playback attribution coverage is below configured threshold"
         }
     }
 
     return [ordered]@{
         status = $status
-        playback_preflight_outcome = $dominantOutcome
+        playback_preflight_outcome = $playbackOutcome
+        coverage_percent = $coveragePercent
+
+        # Compatibility field for contract/dashboard naming.
         attribution_coverage_percent = $coveragePercent
-        unknown_outcome_ratio = $unknownRatio
-        minimum_attribution_coverage_percent = $MinimumAttributionCoveragePercent
-        max_unknown_outcome_ratio = $MaxUnknownOutcomeRatio
-        total_events = $totalEvents
-        attributed_events = $attributedEvents
-        unknown_events = $unknownEvents
-        playable_count = $playableCount
-        unavailable_count = $unavailableCount
-        stale_id_count = $staleIdCount
-        bouquet_denied_count = $bouquetDeniedCount
-        provider_error_count = $providerErrorCount
-        container_unsupported_count = $containerUnsupportedCount
-        resolver_error_count = $resolverErrorCount
-        media_type = $MediaType
-        outcome_counts = $outcomeCounts
-        validation_note = $note
+
+        total_playback_candidates = $totalPlaybackCandidates
+        attributed_count = $attributedCount
+        unattributed_count = $unattributedCount
+        missing_provider_id_count = $missingProviderIdCount
+        missing_container_count = $missingContainerCount
+        container_known_count = $containerKnownCount
+        blocked_406_count = $blocked406Count
+        source_table_count = $sourceTableCount
+        minimum_coverage_percent = $MinimumCoveragePercent
+        source_name = $SourceName
+        mode = $Mode
+        validation_note = $validationNote
     }
 }
 
@@ -452,7 +790,7 @@ try {
             -Environment $Environment `
             -Status "job_skipped" `
             -EventType "job_skipped" `
-            -SourceName "playback_preflight_attribution" `
+            -SourceName "playback_preflight" `
             -DurationMs (Get-DurationMs -Start $script:StartedAt) `
             -Data @{
                 kill_switch_name = $KillSwitchName
@@ -472,12 +810,12 @@ try {
             -P0Item "P0.7" `
             -SignalValue "disabled" `
             -Status "disabled" `
-            -AllowedValues "playable|unavailable|stale_id|bouquet_denied|provider_error|container_unsupported|resolver_error|unknown|disabled|dry_run|failed" `
+            -AllowedValues "pass|warning|fail|not_run|disabled" `
             -SourceTableOrEndpoint "tools/workers/check_playback_preflight_attribution.ps1" `
             -Data @{
-                dashboard_panel = "Playback Diagnostics"
+                dashboard_panel = "Playback Health"
                 widget_key = "playback.preflight.outcome"
-                owner = "SRE"
+                owner = "Playback Ops"
                 kill_switch_name = $KillSwitchName
             } `
             -LogRoot $LogRoot | Out-Null
@@ -494,13 +832,12 @@ try {
         -Environment $Environment `
         -Status "job_started" `
         -EventType "job_started" `
-        -SourceName "playback_preflight_attribution" `
+        -SourceName "playback_preflight" `
         -Data @{
             kill_switch_name = $KillSwitchName
             mode = $Mode
-            media_type = $MediaType
-            minimum_attribution_coverage_percent = $MinimumAttributionCoveragePercent
-            max_unknown_outcome_ratio = $MaxUnknownOutcomeRatio
+            database_key = $DatabaseKey
+            minimum_coverage_percent = $MinimumCoveragePercent
         } `
         -LogRoot $LogRoot | Out-Null
 
@@ -540,7 +877,8 @@ try {
         } `
         -LogRoot $LogRoot | Out-Null
 
-    $snapshot = $null
+    $metricRow = $null
+    $sourceName = "dry_run_no_db_query"
 
     if ($Mode -eq "SnapshotInput") {
         if ([string]::IsNullOrWhiteSpace($InputJsonPath)) {
@@ -549,13 +887,25 @@ try {
 
         $resolvedInput = Resolve-RepoRelativePath -RepoRoot $repoRoot -Path $InputJsonPath
         $snapshot = Read-PlaybackSnapshot -Path $resolvedInput
+        $metricRow = Get-SnapshotMetricRow -Snapshot $snapshot
+        $sourceName = "snapshot_input"
+    }
+    elseif ($Mode -eq "DbQuery") {
+        $metricRow = Get-PlaybackMetricDbRow `
+            -RepoRoot $repoRoot `
+            -DatabaseKey $DatabaseKey `
+            -Endpoint $DbQueryEndpoint `
+            -Token $DbQueryToken `
+            -TimeoutSec $QueryTimeoutSec
+
+        $sourceName = "dog_open_proc:content.playback_sources"
     }
 
     $metrics = Get-PlaybackMetrics `
-        -Snapshot $snapshot `
-        -MediaType $MediaType `
-        -MinimumAttributionCoveragePercent $MinimumAttributionCoveragePercent `
-        -MaxUnknownOutcomeRatio $MaxUnknownOutcomeRatio
+        -MetricRow $metricRow `
+        -Mode $Mode `
+        -MinimumCoveragePercent $MinimumCoveragePercent `
+        -SourceName $sourceName
 
     Emit-Signal `
         -RunId $script:RunId `
@@ -567,26 +917,23 @@ try {
         -P0Item "P0.7" `
         -SignalValue ([string]$metrics.playback_preflight_outcome) `
         -Status ([string]$metrics.status) `
-        -AllowedValues "playable|unavailable|stale_id|bouquet_denied|provider_error|container_unsupported|resolver_error|unknown|disabled|dry_run|failed" `
+        -AllowedValues "pass|warning|fail|not_run|disabled" `
         -SourceTableOrEndpoint "tools/workers/check_playback_preflight_attribution.ps1" `
         -Data @{
-            dashboard_panel = "Playback Diagnostics"
+            dashboard_panel = "Playback Health"
             widget_key = "playback.preflight.outcome"
-            owner = "SRE"
+            owner = "Playback Ops"
             kill_switch_name = $KillSwitchName
             mode = $Mode
-            media_type = $MediaType
-            total_events = $metrics.total_events
-            attributed_events = $metrics.attributed_events
-            unknown_events = $metrics.unknown_events
-            unknown_outcome_ratio = $metrics.unknown_outcome_ratio
-            playable_count = $metrics.playable_count
-            unavailable_count = $metrics.unavailable_count
-            stale_id_count = $metrics.stale_id_count
-            bouquet_denied_count = $metrics.bouquet_denied_count
-            provider_error_count = $metrics.provider_error_count
-            container_unsupported_count = $metrics.container_unsupported_count
-            resolver_error_count = $metrics.resolver_error_count
+            source_name = $metrics.source_name
+            total_playback_candidates = $metrics.total_playback_candidates
+            attributed_count = $metrics.attributed_count
+            unattributed_count = $metrics.unattributed_count
+            missing_provider_id_count = $metrics.missing_provider_id_count
+            missing_container_count = $metrics.missing_container_count
+            container_known_count = $metrics.container_known_count
+            blocked_406_count = $metrics.blocked_406_count
+            coverage_percent = $metrics.coverage_percent
             validation_note = $metrics.validation_note
         } `
         -LogRoot $LogRoot | Out-Null
@@ -605,18 +952,16 @@ try {
         -AllowedValues "0..100" `
         -SourceTableOrEndpoint "tools/workers/check_playback_preflight_attribution.ps1" `
         -Data @{
-            dashboard_panel = "Playback Diagnostics"
+            dashboard_panel = "Playback Health"
             widget_key = "playback.attribution.coverage_percent"
-            owner = "SRE"
+            owner = "Playback Ops"
             kill_switch_name = $KillSwitchName
             mode = $Mode
-            media_type = $MediaType
-            minimum_attribution_coverage_percent = $metrics.minimum_attribution_coverage_percent
-            max_unknown_outcome_ratio = $metrics.max_unknown_outcome_ratio
-            total_events = $metrics.total_events
-            attributed_events = $metrics.attributed_events
-            unknown_events = $metrics.unknown_events
-            validation_note = $metrics.validation_note
+            source_name = $metrics.source_name
+            total_playback_candidates = $metrics.total_playback_candidates
+            attributed_count = $metrics.attributed_count
+            unattributed_count = $metrics.unattributed_count
+            minimum_coverage_percent = $metrics.minimum_coverage_percent
         } `
         -LogRoot $LogRoot | Out-Null
 
@@ -628,35 +973,33 @@ try {
         -Environment $Environment `
         -Status "job_completed" `
         -EventType "job_completed" `
-        -SourceName "playback_preflight_attribution" `
-        -SourceRowCount ([int]$metrics.total_events) `
+        -SourceName ([string]$metrics.source_name) `
+        -SourceRowCount ([int]$metrics.total_playback_candidates) `
         -RowsInserted 0 `
         -RowsUpdated 0 `
-        -RowsSkipped ([int]$metrics.total_events) `
-        -RowsFailed ([int]$metrics.unknown_events) `
+        -RowsSkipped ([int]$metrics.total_playback_candidates) `
+        -RowsFailed 0 `
         -DurationMs (Get-DurationMs -Start $script:StartedAt) `
         -Data @{
             playback_preflight_outcome = $metrics.playback_preflight_outcome
-            attribution_coverage_percent = $metrics.attribution_coverage_percent
-            unknown_outcome_ratio = $metrics.unknown_outcome_ratio
-            total_events = $metrics.total_events
-            attributed_events = $metrics.attributed_events
-            unknown_events = $metrics.unknown_events
-            playable_count = $metrics.playable_count
-            unavailable_count = $metrics.unavailable_count
-            stale_id_count = $metrics.stale_id_count
-            bouquet_denied_count = $metrics.bouquet_denied_count
-            provider_error_count = $metrics.provider_error_count
-            container_unsupported_count = $metrics.container_unsupported_count
-            resolver_error_count = $metrics.resolver_error_count
-            media_type = $MediaType
+            coverage_percent = $metrics.coverage_percent
+            total_playback_candidates = $metrics.total_playback_candidates
+            attributed_count = $metrics.attributed_count
+            unattributed_count = $metrics.unattributed_count
+            missing_provider_id_count = $metrics.missing_provider_id_count
+            missing_container_count = $metrics.missing_container_count
+            container_known_count = $metrics.container_known_count
+            blocked_406_count = $metrics.blocked_406_count
+            source_table_count = $metrics.source_table_count
+            minimum_coverage_percent = $metrics.minimum_coverage_percent
+            source_name = $metrics.source_name
             mode = $Mode
             validation_note = $metrics.validation_note
-            note = "local-first scaffold; no DB query performed"
+            note = "read-only playback preflight attribution check; no DB writes performed"
         } `
         -LogRoot $LogRoot | Out-Null
 
-    Write-Output "OK: playback preflight attribution check completed. outcome=$($metrics.playback_preflight_outcome) coverage_percent=$($metrics.attribution_coverage_percent) mode=$Mode run_id=$script:RunId"
+    Write-Output "OK: playback preflight attribution check completed. outcome=$($metrics.playback_preflight_outcome) coverage_percent=$($metrics.coverage_percent) total_candidates=$($metrics.total_playback_candidates) unattributed_count=$($metrics.unattributed_count) missing_provider_id_count=$($metrics.missing_provider_id_count) missing_container_count=$($metrics.missing_container_count) blocked_406_count=$($metrics.blocked_406_count) mode=$Mode run_id=$script:RunId"
     exit 0
 }
 catch {
@@ -676,14 +1019,14 @@ catch {
             -Environment $Environment `
             -Status "job_failed" `
             -EventType "job_failed" `
-            -SourceName "playback_preflight_attribution" `
+            -SourceName "playback_preflight" `
             -DurationMs $duration `
-            -ErrorCode "PLAYBACK_PREFLIGHT_ATTRIBUTION_CHECK_FAILED" `
+            -ErrorCode "PLAYBACK_PREFLIGHT_FAILED" `
             -ErrorMessage $message `
             -Data @{
                 kill_switch_name = $KillSwitchName
                 mode = $Mode
-                media_type = $MediaType
+                database_key = $DatabaseKey
             } `
             -LogRoot $LogRoot | Out-Null
 
@@ -695,24 +1038,23 @@ catch {
             -Environment $Environment `
             -SignalName "playback_preflight_outcome" `
             -P0Item "P0.7" `
-            -SignalValue "failed" `
+            -SignalValue "fail" `
             -Status "failed" `
-            -AllowedValues "playable|unavailable|stale_id|bouquet_denied|provider_error|container_unsupported|resolver_error|unknown|disabled|dry_run|failed" `
+            -AllowedValues "pass|warning|fail|not_run|disabled" `
             -SourceTableOrEndpoint "tools/workers/check_playback_preflight_attribution.ps1" `
-            -ErrorCode "PLAYBACK_PREFLIGHT_ATTRIBUTION_CHECK_FAILED" `
+            -ErrorCode "PLAYBACK_PREFLIGHT_FAILED" `
             -ErrorMessage $message `
             -Data @{
-                dashboard_panel = "Playback Diagnostics"
+                dashboard_panel = "Playback Health"
                 widget_key = "playback.preflight.outcome"
-                owner = "SRE"
+                owner = "Playback Ops"
                 kill_switch_name = $KillSwitchName
                 mode = $Mode
-                media_type = $MediaType
             } `
             -LogRoot $LogRoot | Out-Null
     }
     catch {
-        Write-Error "Playback preflight attribution worker failed and failed to log error: $($_.Exception.Message)"
+        Write-Error "Playback preflight worker failed and failed to log error: $($_.Exception.Message)"
     }
 
     Write-Error "FAILED: playback preflight attribution worker failed. run_id=$script:RunId error=$message"
