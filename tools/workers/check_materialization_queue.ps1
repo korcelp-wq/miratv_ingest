@@ -373,10 +373,7 @@ function Get-QueueMetricSql {
     )
 
     $attemptColumn = Get-PreferredColumn -ColumnNames $ColumnNames -PreferredNames @(
-        "attempts",
-        "attempt_count",
-        "retry_count",
-        "tries"
+        "attempt_count", "attempts", "retry_count", "tries"
     )
 
     $statusExpr = "LOWER(COALESCE($([string](Escape-SqlIdentifier -Name $statusColumn)), 'unknown'))"
@@ -997,4 +994,5 @@ catch {
     Write-Error "FAILED: materialization queue worker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
