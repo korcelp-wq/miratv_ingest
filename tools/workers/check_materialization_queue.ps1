@@ -1,16 +1,24 @@
-# MiraTV Materialization Queue Reliability Worker
+﻿# MiraTV Materialization Queue Reliability Worker
 # File: tools/workers/check_materialization_queue.ps1
 # Purpose:
-#   P0.6 materialization queue reliability scaffold.
-#   Establishes observable checks for queue age, dead-letter count, requeue rate,
-#   and stalled materialization behavior before DB-backed enforcement.
+#   P0.6 materialization queue reliability scaffold + read-only DB-backed mode.
+#   Establishes observable materialization queue health checks without mutating queue tables.
 #
 # Current implementation:
-#   - Local-first, no DB writes yet.
-#   - Supports DryRun and SnapshotInput modes.
-#   - Emits materialization queue and worker heartbeat signals.
-#   - Does not mutate queue tables or retry/dead-letter records.
-#   - Designed to be extended with DB/query bridge checks later.
+#   - Supports DryRun, SnapshotInput, and DbQuery modes.
+#   - DbQuery mode uses tools/common/DbQuery.psm1, which calls dog_open_proc.php.
+#   - DbQuery mode discovers queue-like tables and columns before querying them.
+#   - Does not mutate database tables.
+#
+# Queue philosophy:
+#   Materialization is allowed to be asynchronous, but the queue must not silently stall.
+#   This worker separates:
+#     - pending rows
+#     - in-progress rows
+#     - failed/dead-letter rows
+#     - recently completed rows
+#     - oldest pending age
+#     - requeue rate
 #
 # Signals:
 #   - materialization_queue_oldest_age_minutes
@@ -21,14 +29,15 @@
 # Kill switch:
 #   - ENABLE_MATERIALIZATION_CONSUMERS
 #
+# Required for DbQuery mode:
+#   $env:DOG_OPEN_PROC_ENDPOINT = "https://miratv.club/_workers/api/series/dog_open_proc.php"
+#   $env:DOG_OPEN_PROC_TOKEN = "<token>"
+#
 # Usage:
 #   pwsh -NoProfile -ExecutionPolicy Bypass -File "tools/workers/check_materialization_queue.ps1" -Environment "dev"
 #
-# Optional snapshot input:
-#   pwsh -NoProfile -ExecutionPolicy Bypass -File "tools/workers/check_materialization_queue.ps1" `
-#     -Environment "dev" `
-#     -Mode "SnapshotInput" `
-#     -InputJsonPath "runtime/samples/materialization_queue_snapshot.json"
+# DbQuery:
+#   pwsh -NoProfile -ExecutionPolicy Bypass -File "tools/workers/check_materialization_queue.ps1" -Environment "dev" -Mode "DbQuery"
 
 [CmdletBinding()]
 param(
@@ -37,16 +46,21 @@ param(
     [string]$Environment = "prod",
     [string]$KillSwitchName = "ENABLE_MATERIALIZATION_CONSUMERS",
 
-    [ValidateSet("DryRun", "SnapshotInput")]
+    [ValidateSet("DryRun", "SnapshotInput", "DbQuery")]
     [string]$Mode = "DryRun",
 
     [string]$InputJsonPath = "",
-    [string]$QueueName = "",
-    [int]$MaxOldestAgeMinutes = 60,
+    [string]$DatabaseKey = "ip",
+    [string]$DbQueryEndpoint = "",
+    [string]$DbQueryToken = "",
+    [int]$QueryTimeoutSec = 30,
+
+    [int]$MaxOldestAgeMinutes = 1440,
     [int]$MaxDeadLetterCount = 0,
     [decimal]$MaxRequeueRate = 0.10,
-    [int]$HeartbeatIntervalSeconds = 300,
-    [int]$StaleAfterSeconds = 900,
+    [int]$RecentCompletionWindowMinutes = 1440,
+    [int]$HeartbeatIntervalSeconds = 1800,
+    [int]$StaleAfterSeconds = 7200,
     [string]$LogRoot = ""
 )
 
@@ -118,7 +132,7 @@ function Read-QueueSnapshot {
     return $raw | ConvertFrom-Json -ErrorAction Stop
 }
 
-function Convert-ToArray {
+function Convert-ToArraySafe {
     [CmdletBinding()]
     param(
         [AllowNull()]
@@ -202,7 +216,7 @@ function Convert-ToDecimalSafe {
     return $DefaultValue
 }
 
-function Get-QueueRows {
+function Get-SnapshotMetricRow {
     [CmdletBinding()]
     param(
         [AllowNull()]
@@ -210,174 +224,452 @@ function Get-QueueRows {
     )
 
     if ($null -eq $Snapshot) {
-        return @()
+        return $null
     }
 
-    if ($Snapshot.PSObject.Properties.Name -contains "queues") {
-        return Convert-ToArray -Value $Snapshot.queues
+    if ($Snapshot.PSObject.Properties.Name -contains "metrics") {
+        $rows = Convert-ToArraySafe -Value $Snapshot.metrics
+        if ($rows.Count -gt 0) {
+            return $rows[0]
+        }
     }
 
-    if ($Snapshot.PSObject.Properties.Name -contains "items") {
-        return Convert-ToArray -Value $Snapshot.items
+    if ($Snapshot.PSObject.Properties.Name -contains "rows") {
+        $rows = Convert-ToArraySafe -Value $Snapshot.rows
+        if ($rows.Count -gt 0) {
+            return $rows[0]
+        }
     }
 
-    if ($Snapshot.PSObject.Properties.Name -contains "queue_rows") {
-        return Convert-ToArray -Value $Snapshot.queue_rows
+    if ($Snapshot.PSObject.Properties.Name -contains "result") {
+        $rows = Convert-ToArraySafe -Value $Snapshot.result
+        if ($rows.Count -gt 0) {
+            return $rows[0]
+        }
     }
 
-    if ($Snapshot.PSObject.Properties.Name -contains "results") {
-        return Convert-ToArray -Value $Snapshot.results
+    if ($Snapshot.PSObject.Properties.Name -contains "queue") {
+        $rows = Convert-ToArraySafe -Value $Snapshot.queue
+        if ($rows.Count -gt 0) {
+            return $rows[0]
+        }
     }
 
-    return Convert-ToArray -Value $Snapshot
+    return $Snapshot
+}
+
+function Escape-SqlIdentifier {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    if ($Name -notmatch "^[A-Za-z0-9_]+$") {
+        throw "Unsafe SQL identifier: $Name"
+    }
+
+    return "``$Name``"
+}
+
+function Get-QueueDiscoverySql {
+    [CmdletBinding()]
+    param()
+
+    return @"
+SELECT
+    t.TABLE_NAME AS table_name,
+    c.COLUMN_NAME AS column_name
+FROM information_schema.TABLES t
+LEFT JOIN information_schema.COLUMNS c
+    ON c.TABLE_SCHEMA = t.TABLE_SCHEMA
+   AND c.TABLE_NAME = t.TABLE_NAME
+WHERE t.TABLE_SCHEMA = DATABASE()
+  AND (
+        t.TABLE_NAME = 'content_materialization_queue'
+     OR t.TABLE_NAME LIKE '%materialization%queue%'
+     OR t.TABLE_NAME LIKE '%materialize%queue%'
+     OR t.TABLE_NAME LIKE '%enrichment%queue%'
+  )
+ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION
+"@
+}
+
+function Get-PreferredQueueTable {
+    [CmdletBinding()]
+    param(
+        [hashtable]$TableMap
+    )
+
+    $preferred = @(
+        "content_materialization_queue",
+        "materialization_queue",
+        "content_enrichment_queue"
+    )
+
+    foreach ($candidate in $preferred) {
+        if ($TableMap.ContainsKey($candidate)) {
+            return $candidate
+        }
+    }
+
+    foreach ($key in $TableMap.Keys) {
+        return [string]$key
+    }
+
+    return ""
+}
+
+function Get-PreferredColumn {
+    [CmdletBinding()]
+    param(
+        [string[]]$ColumnNames,
+        [string[]]$PreferredNames
+    )
+
+    foreach ($candidate in $PreferredNames) {
+        if ($ColumnNames -contains $candidate) {
+            return $candidate
+        }
+    }
+
+    return ""
+}
+
+function Get-QueueMetricSql {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TableName,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$ColumnNames,
+
+        [int]$RecentCompletionWindowMinutes = 1440
+    )
+
+    $safeTable = Escape-SqlIdentifier -Name $TableName
+
+    $statusColumn = Get-PreferredColumn -ColumnNames $ColumnNames -PreferredNames @(
+        "status",
+        "queue_status",
+        "state"
+    )
+
+    $createdColumn = Get-PreferredColumn -ColumnNames $ColumnNames -PreferredNames @(
+        "created_at",
+        "queued_at",
+        "requested_at",
+        "inserted_at"
+    )
+
+    $updatedColumn = Get-PreferredColumn -ColumnNames $ColumnNames -PreferredNames @(
+        "updated_at",
+        "last_updated_at",
+        "processed_at",
+        "completed_at",
+        "finished_at",
+        "last_attempt_at"
+    )
+
+    $attemptColumn = Get-PreferredColumn -ColumnNames $ColumnNames -PreferredNames @(
+        "attempts",
+        "attempt_count",
+        "retry_count",
+        "tries"
+    )
+
+    $statusExpr = "LOWER(COALESCE($([string](Escape-SqlIdentifier -Name $statusColumn)), 'unknown'))"
+    if ([string]::IsNullOrWhiteSpace($statusColumn)) {
+        $statusExpr = "'unknown'"
+    }
+
+    $createdExpr = "NULL"
+    if (-not [string]::IsNullOrWhiteSpace($createdColumn)) {
+        $createdExpr = [string](Escape-SqlIdentifier -Name $createdColumn)
+    }
+
+    $updatedExpr = "NULL"
+    if (-not [string]::IsNullOrWhiteSpace($updatedColumn)) {
+        $updatedExpr = [string](Escape-SqlIdentifier -Name $updatedColumn)
+    }
+
+    $attemptExpr = "0"
+    if (-not [string]::IsNullOrWhiteSpace($attemptColumn)) {
+        $attemptExpr = "COALESCE($([string](Escape-SqlIdentifier -Name $attemptColumn)), 0)"
+    }
+
+    return @"
+SELECT
+    '$TableName' AS queue_table,
+    COUNT(*) AS total_rows,
+    SUM(
+        CASE
+            WHEN $statusExpr IN ('pending', 'queued', 'new', 'ready', 'not_run')
+            THEN 1
+            ELSE 0
+        END
+    ) AS pending_count,
+    SUM(
+        CASE
+            WHEN $statusExpr IN ('running', 'processing', 'in_progress', 'started', 'working')
+            THEN 1
+            ELSE 0
+        END
+    ) AS in_progress_count,
+    SUM(
+        CASE
+            WHEN $statusExpr IN ('failed', 'error', 'dead_letter', 'deadletter', 'blocked')
+            THEN 1
+            ELSE 0
+        END
+    ) AS failed_count,
+    SUM(
+        CASE
+            WHEN $statusExpr IN ('dead_letter', 'deadletter')
+            THEN 1
+            ELSE 0
+        END
+    ) AS dead_letter_count,
+    SUM(
+        CASE
+            WHEN $statusExpr IN ('complete', 'completed', 'done', 'success', 'succeeded')
+             AND $updatedExpr IS NOT NULL
+             AND $updatedExpr >= DATE_SUB(NOW(), INTERVAL $RecentCompletionWindowMinutes MINUTE)
+            THEN 1
+            ELSE 0
+        END
+    ) AS completed_recent_count,
+    COALESCE(MAX($attemptExpr), 0) AS max_attempts,
+    SUM(CASE WHEN $attemptExpr > 1 THEN 1 ELSE 0 END) AS requeued_rows,
+    CASE
+        WHEN COUNT(*) > 0 THEN ROUND(SUM(CASE WHEN $attemptExpr > 1 THEN 1 ELSE 0 END) / COUNT(*), 6)
+        ELSE 0
+    END AS requeue_rate,
+    COALESCE(
+        MAX(
+            CASE
+                WHEN $statusExpr IN ('pending', 'queued', 'new', 'ready', 'not_run')
+                 AND $createdExpr IS NOT NULL
+                THEN TIMESTAMPDIFF(MINUTE, $createdExpr, NOW())
+                ELSE 0
+            END
+        ),
+        0
+    ) AS oldest_age_minutes
+FROM $safeTable
+"@
+}
+
+function Get-QueueMetricDbRow {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+
+        [string]$DatabaseKey = "ip",
+
+        [string]$Endpoint = "",
+
+        [string]$Token = "",
+
+        [int]$TimeoutSec = 30,
+
+        [int]$RecentCompletionWindowMinutes = 1440
+    )
+
+    $dbQueryModule = Join-Path $RepoRoot "tools\common\DbQuery.psm1"
+
+    if (-not (Test-Path -LiteralPath $dbQueryModule)) {
+        throw "DbQuery module not found at: $dbQueryModule"
+    }
+
+    Import-Module $dbQueryModule -Force
+
+    $discoveryResult = Invoke-ReadOnlyDbQuery `
+        -DatabaseKey $DatabaseKey `
+        -Sql (Get-QueueDiscoverySql) `
+        -Endpoint $Endpoint `
+        -Token $Token `
+        -TimeoutSec $TimeoutSec
+
+    $discoveryRows = Convert-ToArraySafe -Value $discoveryResult.rows
+    $tableMap = @{}
+
+    foreach ($row in $discoveryRows) {
+        $tableName = Get-PropertyValue -Object $row -Names @("table_name", "TABLE_NAME")
+        $columnName = Get-PropertyValue -Object $row -Names @("column_name", "COLUMN_NAME")
+
+        if ($null -eq $tableName -or [string]::IsNullOrWhiteSpace([string]$tableName)) {
+            continue
+        }
+
+        $tableNameText = ([string]$tableName).Trim()
+
+        if ($tableNameText -notmatch "^[A-Za-z0-9_]+$") {
+            continue
+        }
+
+        if (-not $tableMap.ContainsKey($tableNameText)) {
+            $tableMap[$tableNameText] = New-Object System.Collections.Generic.List[string]
+        }
+
+        if ($null -ne $columnName -and -not [string]::IsNullOrWhiteSpace([string]$columnName)) {
+            $columnNameText = ([string]$columnName).Trim()
+            if ($columnNameText -match "^[A-Za-z0-9_]+$") {
+                $tableMap[$tableNameText].Add($columnNameText) | Out-Null
+            }
+        }
+    }
+
+    $queueTable = Get-PreferredQueueTable -TableMap $tableMap
+
+    if ([string]::IsNullOrWhiteSpace($queueTable)) {
+        return [pscustomobject]@{
+            queue_table = "not_found"
+            total_rows = 0
+            pending_count = 0
+            in_progress_count = 0
+            failed_count = 0
+            dead_letter_count = 0
+            completed_recent_count = 0
+            max_attempts = 0
+            requeued_rows = 0
+            requeue_rate = 0
+            oldest_age_minutes = 0
+        }
+    }
+
+    $columns = @($tableMap[$queueTable].ToArray())
+
+    $sql = Get-QueueMetricSql `
+        -TableName $queueTable `
+        -ColumnNames $columns `
+        -RecentCompletionWindowMinutes $RecentCompletionWindowMinutes
+
+    $queryResult = Invoke-ReadOnlyDbQuery `
+        -DatabaseKey $DatabaseKey `
+        -Sql $sql `
+        -Endpoint $Endpoint `
+        -Token $Token `
+        -TimeoutSec $TimeoutSec
+
+    if ($null -eq $queryResult) {
+        throw "DbQuery returned null result."
+    }
+
+    if (-not ($queryResult.PSObject.Properties.Name -contains "rows")) {
+        throw "DbQuery result did not include rows."
+    }
+
+    $rows = Convert-ToArraySafe -Value $queryResult.rows
+
+    if ($rows.Count -eq 0) {
+        throw "DbQuery returned zero rows for materialization queue query."
+    }
+
+    return $rows[0]
 }
 
 function Get-QueueMetrics {
     [CmdletBinding()]
     param(
         [AllowNull()]
-        [object]$Snapshot,
+        [object]$MetricRow,
 
-        [string]$QueueName,
+        [string]$Mode,
 
         [int]$MaxOldestAgeMinutes,
 
         [int]$MaxDeadLetterCount,
 
-        [decimal]$MaxRequeueRate
+        [decimal]$MaxRequeueRate,
+
+        [string]$SourceName
     )
 
-    $rows = Get-QueueRows -Snapshot $Snapshot
-
-    if (-not [string]::IsNullOrWhiteSpace($QueueName)) {
-        $rows = @(
-            $rows | Where-Object {
-                $queueRaw = Get-PropertyValue -Object $_ -Names @("queue_name", "queue", "name")
-                ([string]$queueRaw).Trim().ToLowerInvariant() -eq $QueueName.Trim().ToLowerInvariant()
-            }
-        )
-    }
-
-    $totalQueues = @($rows).Count
-    $oldestAgeMinutes = 0
-    $deadLetterCount = 0
-    $requeueRate = [decimal]0
-    $pendingCount = 0
-    $processingCount = 0
-    $failedCount = 0
-    $completedCount = 0
-    $stalledCount = 0
-    $warningQueues = 0
-    $failedQueues = 0
-    $queueSummaries = @()
-
-    foreach ($row in $rows) {
-        $queueRaw = Get-PropertyValue -Object $row -Names @("queue_name", "queue", "name")
-        $queue = "unknown"
-
-        if ($null -ne $queueRaw -and -not [string]::IsNullOrWhiteSpace([string]$queueRaw)) {
-            $queue = ([string]$queueRaw).Trim().ToLowerInvariant()
-        }
-
-        $rowOldestAge = Convert-ToIntSafe -Value (Get-PropertyValue -Object $row -Names @("oldest_age_minutes", "queue_oldest_age_minutes", "oldest_pending_age_minutes")) -DefaultValue 0
-        $rowDeadLetter = Convert-ToIntSafe -Value (Get-PropertyValue -Object $row -Names @("dead_letter_count", "deadletter_count", "dlq_count")) -DefaultValue 0
-        $rowRequeueRate = Convert-ToDecimalSafe -Value (Get-PropertyValue -Object $row -Names @("requeue_rate", "retry_rate", "requeued_rate")) -DefaultValue 0
-        $rowPending = Convert-ToIntSafe -Value (Get-PropertyValue -Object $row -Names @("pending_count", "queued_count", "ready_count")) -DefaultValue 0
-        $rowProcessing = Convert-ToIntSafe -Value (Get-PropertyValue -Object $row -Names @("processing_count", "running_count", "in_progress_count")) -DefaultValue 0
-        $rowFailed = Convert-ToIntSafe -Value (Get-PropertyValue -Object $row -Names @("failed_count", "error_count")) -DefaultValue 0
-        $rowCompleted = Convert-ToIntSafe -Value (Get-PropertyValue -Object $row -Names @("completed_count", "done_count", "success_count")) -DefaultValue 0
-        $rowStalled = Convert-ToIntSafe -Value (Get-PropertyValue -Object $row -Names @("stalled_count", "stuck_count")) -DefaultValue 0
-
-        if ($rowOldestAge -gt $oldestAgeMinutes) {
-            $oldestAgeMinutes = $rowOldestAge
-        }
-
-        $deadLetterCount += $rowDeadLetter
-        $pendingCount += $rowPending
-        $processingCount += $rowProcessing
-        $failedCount += $rowFailed
-        $completedCount += $rowCompleted
-        $stalledCount += $rowStalled
-
-        if ($rowRequeueRate -gt $requeueRate) {
-            $requeueRate = $rowRequeueRate
-        }
-
-        $queueStatus = "pass"
-        $queueNote = "queue metrics within configured thresholds"
-
-        if ($rowDeadLetter -gt $MaxDeadLetterCount -or $rowStalled -gt 0) {
-            $queueStatus = "fail"
-            $queueNote = "dead-letter or stalled queue items detected"
-            $failedQueues++
-        }
-        elseif ($rowOldestAge -gt $MaxOldestAgeMinutes -or $rowRequeueRate -gt $MaxRequeueRate -or $rowFailed -gt 0) {
-            $queueStatus = "warning"
-            $queueNote = "queue warning threshold exceeded"
-            $warningQueues++
-        }
-
-        $queueSummaries += [ordered]@{
-            queue_name = $queue
-            status = $queueStatus
-            oldest_age_minutes = $rowOldestAge
-            dead_letter_count = $rowDeadLetter
-            requeue_rate = $rowRequeueRate
-            pending_count = $rowPending
-            processing_count = $rowProcessing
-            failed_count = $rowFailed
-            completed_count = $rowCompleted
-            stalled_count = $rowStalled
-            note = $queueNote
-        }
-    }
-
     $status = "dry_run"
-    $queueResult = "not_run"
-    $note = "local-first scaffold; no DB query performed"
+    $queueStatus = "not_run"
+    $queueTable = "not_run"
+    $totalRows = 0
+    $pendingCount = 0
+    $inProgressCount = 0
+    $failedCount = 0
+    $deadLetterCount = 0
+    $completedRecentCount = 0
+    $maxAttempts = 0
+    $requeuedRows = 0
+    $requeueRate = [decimal]0
+    $oldestAgeMinutes = 0
+    $validationNote = "local-first scaffold; no DB query performed"
 
-    if ($null -ne $Snapshot) {
-        $status = "pass"
-        $queueResult = "pass"
-        $note = "materialization queue metrics within configured thresholds"
+    if ($null -ne $MetricRow) {
+        $queueTableRaw = Get-PropertyValue -Object $MetricRow -Names @("queue_table", "table_name", "queue_name")
+        if ($null -ne $queueTableRaw -and -not [string]::IsNullOrWhiteSpace([string]$queueTableRaw)) {
+            $queueTable = ([string]$queueTableRaw).Trim()
+        }
 
-        if ($totalQueues -eq 0) {
-            $status = "warning"
-            $queueResult = "warning"
-            $note = "no queue rows found for evaluated scope"
+        $totalRows = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("total_rows", "row_count"))
+        $pendingCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("pending_count", "pending_rows"))
+        $inProgressCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("in_progress_count", "running_count", "processing_count"))
+        $failedCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("failed_count", "error_count"))
+        $deadLetterCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("dead_letter_count", "deadletter_count"))
+        $completedRecentCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("completed_recent_count", "recent_completed_count"))
+        $maxAttempts = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("max_attempts", "max_attempt_count"))
+        $requeuedRows = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("requeued_rows", "requeue_rows"))
+        $requeueRate = Convert-ToDecimalSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("requeue_rate", "requeue_ratio"))
+        $oldestAgeMinutes = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("oldest_age_minutes", "oldest_pending_age_minutes"))
+
+        if ($totalRows -gt 0 -and $requeueRate -eq 0 -and $requeuedRows -gt 0) {
+            $requeueRate = [decimal]::Round(([decimal]$requeuedRows / [decimal]$totalRows), 6)
         }
-        elseif ($failedQueues -gt 0) {
-            $status = "fail"
-            $queueResult = "fail"
-            $note = "one or more hard queue reliability thresholds exceeded"
-        }
-        elseif ($warningQueues -gt 0) {
+
+        $status = "ok"
+        $queueStatus = "pass"
+        $validationNote = "materialization queue metrics are within configured thresholds"
+
+        if ($queueTable -eq "not_found") {
             $status = "warning"
-            $queueResult = "warning"
-            $note = "one or more queue warning thresholds exceeded"
+            $queueStatus = "warning"
+            $validationNote = "materialization queue table was not found"
+        }
+        elseif ($deadLetterCount -gt $MaxDeadLetterCount) {
+            $status = "warning"
+            $queueStatus = "warning"
+            $validationNote = "dead letter count exceeds configured threshold"
+        }
+        elseif ($oldestAgeMinutes -gt $MaxOldestAgeMinutes) {
+            $status = "warning"
+            $queueStatus = "warning"
+            $validationNote = "oldest pending materialization age exceeds configured threshold"
+        }
+        elseif ($requeueRate -gt $MaxRequeueRate) {
+            $status = "warning"
+            $queueStatus = "warning"
+            $validationNote = "materialization requeue rate exceeds configured threshold"
         }
     }
 
     return [ordered]@{
         status = $status
-        queue_result = $queueResult
-        oldest_age_minutes = $oldestAgeMinutes
+        materialization_queue_status = $queueStatus
+        queue_table = $queueTable
+        total_rows = $totalRows
+        pending_count = $pendingCount
+        in_progress_count = $inProgressCount
+        failed_count = $failedCount
         dead_letter_count = $deadLetterCount
+        completed_recent_count = $completedRecentCount
+        max_attempts = $maxAttempts
+        requeued_rows = $requeuedRows
         requeue_rate = $requeueRate
+        oldest_age_minutes = $oldestAgeMinutes
         max_oldest_age_minutes = $MaxOldestAgeMinutes
         max_dead_letter_count = $MaxDeadLetterCount
         max_requeue_rate = $MaxRequeueRate
-        total_queues = $totalQueues
-        pending_count = $pendingCount
-        processing_count = $processingCount
-        failed_count = $failedCount
-        completed_count = $completedCount
-        stalled_count = $stalledCount
-        warning_queues = $warningQueues
-        failed_queues = $failedQueues
-        queue_name = $QueueName
-        queue_summaries = $queueSummaries
-        validation_note = $note
+        source_name = $SourceName
+        mode = $Mode
+        validation_note = $validationNote
     }
 }
 
@@ -424,7 +716,7 @@ try {
             -P0Item "P0.6" `
             -SignalValue "disabled" `
             -Status "disabled" `
-            -AllowedValues "0+|disabled|failed" `
+            -AllowedValues "0+" `
             -SourceTableOrEndpoint "tools/workers/check_materialization_queue.ps1" `
             -Data @{
                 dashboard_panel = "Materialization"
@@ -450,7 +742,7 @@ try {
         -Data @{
             kill_switch_name = $KillSwitchName
             mode = $Mode
-            queue_name = $QueueName
+            database_key = $DatabaseKey
             max_oldest_age_minutes = $MaxOldestAgeMinutes
             max_dead_letter_count = $MaxDeadLetterCount
             max_requeue_rate = $MaxRequeueRate
@@ -493,7 +785,8 @@ try {
         } `
         -LogRoot $LogRoot | Out-Null
 
-    $snapshot = $null
+    $metricRow = $null
+    $sourceName = "dry_run_no_db_query"
 
     if ($Mode -eq "SnapshotInput") {
         if ([string]::IsNullOrWhiteSpace($InputJsonPath)) {
@@ -502,14 +795,28 @@ try {
 
         $resolvedInput = Resolve-RepoRelativePath -RepoRoot $repoRoot -Path $InputJsonPath
         $snapshot = Read-QueueSnapshot -Path $resolvedInput
+        $metricRow = Get-SnapshotMetricRow -Snapshot $snapshot
+        $sourceName = "snapshot_input"
+    }
+    elseif ($Mode -eq "DbQuery") {
+        $metricRow = Get-QueueMetricDbRow `
+            -RepoRoot $repoRoot `
+            -DatabaseKey $DatabaseKey `
+            -Endpoint $DbQueryEndpoint `
+            -Token $DbQueryToken `
+            -TimeoutSec $QueryTimeoutSec `
+            -RecentCompletionWindowMinutes $RecentCompletionWindowMinutes
+
+        $sourceName = "dog_open_proc:content.materialization_queue"
     }
 
     $metrics = Get-QueueMetrics `
-        -Snapshot $snapshot `
-        -QueueName $QueueName `
+        -MetricRow $metricRow `
+        -Mode $Mode `
         -MaxOldestAgeMinutes $MaxOldestAgeMinutes `
         -MaxDeadLetterCount $MaxDeadLetterCount `
-        -MaxRequeueRate $MaxRequeueRate
+        -MaxRequeueRate $MaxRequeueRate `
+        -SourceName $sourceName
 
     Emit-Signal `
         -RunId $script:RunId `
@@ -530,11 +837,10 @@ try {
             owner = "Content Ops"
             kill_switch_name = $KillSwitchName
             mode = $Mode
-            queue_name = $QueueName
-            max_oldest_age_minutes = $metrics.max_oldest_age_minutes
-            total_queues = $metrics.total_queues
+            source_name = $metrics.source_name
+            queue_table = $metrics.queue_table
             pending_count = $metrics.pending_count
-            processing_count = $metrics.processing_count
+            max_oldest_age_minutes = $metrics.max_oldest_age_minutes
             validation_note = $metrics.validation_note
         } `
         -LogRoot $LogRoot | Out-Null
@@ -558,12 +864,10 @@ try {
             owner = "Content Ops"
             kill_switch_name = $KillSwitchName
             mode = $Mode
-            queue_name = $QueueName
-            max_dead_letter_count = $metrics.max_dead_letter_count
-            failed_queues = $metrics.failed_queues
+            source_name = $metrics.source_name
+            queue_table = $metrics.queue_table
             failed_count = $metrics.failed_count
-            stalled_count = $metrics.stalled_count
-            validation_note = $metrics.validation_note
+            max_dead_letter_count = $metrics.max_dead_letter_count
         } `
         -LogRoot $LogRoot | Out-Null
 
@@ -586,10 +890,11 @@ try {
             owner = "Content Ops"
             kill_switch_name = $KillSwitchName
             mode = $Mode
-            queue_name = $QueueName
+            source_name = $metrics.source_name
+            queue_table = $metrics.queue_table
+            requeued_rows = $metrics.requeued_rows
+            total_rows = $metrics.total_rows
             max_requeue_rate = $metrics.max_requeue_rate
-            warning_queues = $metrics.warning_queues
-            validation_note = $metrics.validation_note
         } `
         -LogRoot $LogRoot | Out-Null
 
@@ -601,34 +906,37 @@ try {
         -Environment $Environment `
         -Status "job_completed" `
         -EventType "job_completed" `
-        -SourceName "materialization_queue" `
-        -SourceRowCount ([int]$metrics.total_queues) `
+        -SourceName ([string]$metrics.source_name) `
+        -SourceRowCount ([int]$metrics.total_rows) `
         -RowsInserted 0 `
         -RowsUpdated 0 `
-        -RowsSkipped ([int]$metrics.total_queues) `
-        -RowsFailed ([int]$metrics.failed_queues) `
+        -RowsSkipped ([int]$metrics.total_rows) `
+        -RowsFailed 0 `
         -DurationMs (Get-DurationMs -Start $script:StartedAt) `
         -Data @{
-            queue_result = $metrics.queue_result
-            oldest_age_minutes = $metrics.oldest_age_minutes
-            dead_letter_count = $metrics.dead_letter_count
-            requeue_rate = $metrics.requeue_rate
-            total_queues = $metrics.total_queues
+            materialization_queue_status = $metrics.materialization_queue_status
+            queue_table = $metrics.queue_table
+            total_rows = $metrics.total_rows
             pending_count = $metrics.pending_count
-            processing_count = $metrics.processing_count
+            in_progress_count = $metrics.in_progress_count
             failed_count = $metrics.failed_count
-            completed_count = $metrics.completed_count
-            stalled_count = $metrics.stalled_count
-            warning_queues = $metrics.warning_queues
-            failed_queues = $metrics.failed_queues
-            queue_name = $QueueName
+            dead_letter_count = $metrics.dead_letter_count
+            completed_recent_count = $metrics.completed_recent_count
+            max_attempts = $metrics.max_attempts
+            requeued_rows = $metrics.requeued_rows
+            requeue_rate = $metrics.requeue_rate
+            oldest_age_minutes = $metrics.oldest_age_minutes
+            max_oldest_age_minutes = $metrics.max_oldest_age_minutes
+            max_dead_letter_count = $metrics.max_dead_letter_count
+            max_requeue_rate = $metrics.max_requeue_rate
+            source_name = $metrics.source_name
             mode = $Mode
             validation_note = $metrics.validation_note
-            note = "local-first scaffold; no DB query performed"
+            note = "read-only materialization queue check; no DB writes performed"
         } `
         -LogRoot $LogRoot | Out-Null
 
-    Write-Output "OK: materialization queue check completed. result=$($metrics.queue_result) oldest_age_minutes=$($metrics.oldest_age_minutes) dead_letter_count=$($metrics.dead_letter_count) requeue_rate=$($metrics.requeue_rate) mode=$Mode run_id=$script:RunId"
+    Write-Output "OK: materialization queue check completed. result=$($metrics.materialization_queue_status) queue_table=$($metrics.queue_table) pending_count=$($metrics.pending_count) oldest_age_minutes=$($metrics.oldest_age_minutes) dead_letter_count=$($metrics.dead_letter_count) requeue_rate=$($metrics.requeue_rate) mode=$Mode run_id=$script:RunId"
     exit 0
 }
 catch {
@@ -650,12 +958,12 @@ catch {
             -EventType "job_failed" `
             -SourceName "materialization_queue" `
             -DurationMs $duration `
-            -ErrorCode "MATERIALIZATION_QUEUE_CHECK_FAILED" `
+            -ErrorCode "MATERIALIZATION_QUEUE_FAILED" `
             -ErrorMessage $message `
             -Data @{
                 kill_switch_name = $KillSwitchName
                 mode = $Mode
-                queue_name = $QueueName
+                database_key = $DatabaseKey
             } `
             -LogRoot $LogRoot | Out-Null
 
@@ -667,11 +975,11 @@ catch {
             -Environment $Environment `
             -SignalName "materialization_queue_oldest_age_minutes" `
             -P0Item "P0.6" `
-            -SignalValue "failed" `
+            -SignalValue "0" `
             -Status "failed" `
-            -AllowedValues "0+|disabled|failed" `
+            -AllowedValues "0+" `
             -SourceTableOrEndpoint "tools/workers/check_materialization_queue.ps1" `
-            -ErrorCode "MATERIALIZATION_QUEUE_CHECK_FAILED" `
+            -ErrorCode "MATERIALIZATION_QUEUE_FAILED" `
             -ErrorMessage $message `
             -Data @{
                 dashboard_panel = "Materialization"
@@ -679,7 +987,6 @@ catch {
                 owner = "Content Ops"
                 kill_switch_name = $KillSwitchName
                 mode = $Mode
-                queue_name = $QueueName
             } `
             -LogRoot $LogRoot | Out-Null
     }
@@ -690,3 +997,4 @@ catch {
     Write-Error "FAILED: materialization queue worker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
