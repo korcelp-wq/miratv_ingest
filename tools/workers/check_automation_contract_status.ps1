@@ -312,6 +312,32 @@ try {
         	"materialization_series_frame_capture_last_diagnostic"
     )
     RequiredKillSwitch = "ENABLE_FRAME_CAPTURE_ARTWORK"
+    HelperSubcomponents = @(
+        @{
+            Name = "FrameCapturePreviewCommon"
+            Path = "tools\common\FrameCapturePreviewCommon.psm1"
+            Subcomponent = "frame_capture_preview_common"
+            Purpose = "shared preview helpers, redaction, JSON/hash helpers, and module event wrapper"
+        },
+        @{
+            Name = "SeriesEpisodeResolver"
+            Path = "tools\common\SeriesEpisodeResolver.psm1"
+            Subcomponent = "series_episode_resolver"
+            Purpose = "provider_series_id to episode/container/playback URL preview resolution"
+        },
+        @{
+            Name = "MediaProbePreview"
+            Path = "tools\common\MediaProbePreview.psm1"
+            Subcomponent = "media_probe_preview"
+            Purpose = "resolved episode URL ffprobe preview and probe diagnostic classification"
+        },
+        @{
+            Name = "SupportCasePreview"
+            Path = "tools\common\SupportCasePreview.psm1"
+            Subcomponent = "support_case_preview"
+            Purpose = "support_playback_cases preview payload shaping without writes"
+        }
+    )
 }  
     )
 
@@ -322,6 +348,31 @@ try {
         $fullPath = Join-Path $repoRoot $relativePath
         $exists = Test-Path -LiteralPath $fullPath
         $text = Read-TextFileSafe -Path $fullPath
+
+        $helperSubcomponents = @()
+        $helperFilesTotal = 0
+        $helperFilesPresent = 0
+        $helperDisplayRows = New-Object System.Collections.Generic.List[string]
+
+        if ($unit.ContainsKey("HelperSubcomponents")) {
+            $helperSubcomponents = @($unit.HelperSubcomponents)
+            $helperFilesTotal = @($helperSubcomponents).Count
+
+            foreach ($helper in $helperSubcomponents) {
+                $helperName = [string]$helper.Name
+                $helperRelativePath = [string]$helper.Path
+                $helperSubcomponent = [string]$helper.Subcomponent
+                $helperPurpose = [string]$helper.Purpose
+                $helperFullPath = Join-Path $repoRoot $helperRelativePath
+                $helperExists = Test-Path -LiteralPath $helperFullPath
+
+                if ($helperExists) {
+                    $helperFilesPresent++
+                }
+
+                $helperDisplayRows.Add(("{0}|{1}|exists={2}|subcomponent={3}|purpose={4}" -f $helperName, $helperRelativePath, $helperExists, $helperSubcomponent, $helperPurpose)) | Out-Null
+            }
+        }
 
         $logs = Test-TextContainsAny -Text $text -Patterns @("Write-JobLog", "worker_log")
 
@@ -383,6 +434,10 @@ try {
             signal_dictionary_mapped = $inSignalDictionary
             kill_switch_defined = $killSwitchDefined
             required_kill_switch = $requiredKillSwitch
+            helper_subcomponents = $helperFilesTotal
+            helper_files_present = $helperFilesPresent
+            helper_files_total = $helperFilesTotal
+            helper_subcomponent_details = @($helperDisplayRows)
             missing_signals = @($missingSignals)
             dashboard_missing_signals = @($dashboardMissingSignals)
             dictionary_missing_signals = @($dictionaryMissingSignals)
@@ -449,6 +504,15 @@ try {
         -LogRoot $LogRoot | Out-Null
 
     $results | Format-Table -AutoSize
+
+    $subcomponentRows = @($results | Where-Object { $_.helper_files_total -gt 0 })
+    foreach ($row in $subcomponentRows) {
+        Write-Output ""
+        Write-Output ("SUBCOMPONENTS: {0} helper_files_present={1}/{2}" -f $row.unit_name, $row.helper_files_present, $row.helper_files_total)
+        foreach ($detail in @($row.helper_subcomponent_details)) {
+            Write-Output ("  - {0}" -f $detail)
+        }
+    }
 
     Write-Output "RESULT: $overallStatus total_units=$totalUnits compliant=$compliantUnits blocked=$blockedUnits run_id=$script:RunId"
 
