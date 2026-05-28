@@ -13,6 +13,8 @@
 #   - ProbeResolvedEpisodePreview optionally probes resolved episode URLs in memory and logs only redacted summaries.
 #   - MAT-7 classifies resolved probe failures into provider/network/container/tooling buckets.
 #   - MAT-8 exposes safe ffprobe exit-code and stderr hint summaries for unknown probe failures.
+#   - MAT-9 refines provider HTTP status/family extraction from ffprobe stderr.
+#   - MAT-10 exposes a short redacted ffprobe stderr snippet for unparsed probe failures.
 #   - ProbeOnly mode can test ffprobe availability and optionally probe one manually supplied URL.
 #   - Does not mutate database tables.
 #   - Does not write generated artwork yet.
@@ -296,6 +298,39 @@ function Get-SecretRedactedText {
     }
 
     return $redacted
+}
+
+
+function Get-SafeProbeStderrSnippet {
+    [CmdletBinding()]
+    param(
+        [string]$Text = "",
+        [string[]]$Secrets = @(),
+        [int]$MaxLength = 240
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return ""
+    }
+
+    $safe = Get-SecretRedactedText -Text $Text -Secrets $Secrets
+
+    # ffprobe can echo a request URL in stderr. Never allow full playback URLs into logs.
+    $safe = [regex]::Replace($safe, '(?i)https?://[^\s''"<>]+', 'REDACTED_URL')
+
+    # Remove terminal/control noise and collapse multiline stderr into a compact one-line diagnostic.
+    $safe = [regex]::Replace($safe, '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', ' ')
+    $safe = [regex]::Replace($safe, '\s+', ' ').Trim()
+
+    if ($MaxLength -lt 40) {
+        $MaxLength = 40
+    }
+
+    if ($safe.Length -gt $MaxLength) {
+        return $safe.Substring(0, $MaxLength)
+    }
+
+    return $safe
 }
 
 function Get-ProviderApiUrl {
@@ -709,6 +744,113 @@ function Get-SafePlaybackUrlForSummary {
     return $safeUrl
 }
 
+
+function Get-HttpStatusProbeSignal {
+    [CmdletBinding()]
+    param(
+        [string]$Text = ""
+    )
+
+    $raw = ([string]$Text).Trim()
+    $lower = $raw.ToLowerInvariant()
+
+    if ([string]::IsNullOrWhiteSpace($raw)) {
+        return [pscustomobject]@{
+            status = ""
+            family = ""
+            hint = ""
+        }
+    }
+
+    $patterns = @(
+        "(?i)http[/ ]?\d(?:\.\d)?\s+(?<code>[1-5][0-9][0-9])\b",
+        "(?i)(?:server returned|status|http error|response code|error code|returned code|returned)[^0-9]{0,60}(?<code>[1-5][0-9][0-9])\b",
+        "(?i)\b(?<code>401|403|404|406|408|429|500|502|503|504)\b"
+    )
+
+    foreach ($pattern in $patterns) {
+        $match = [regex]::Match($raw, $pattern)
+        if ($match.Success) {
+            $code = $match.Groups["code"].Value
+            return [pscustomobject]@{
+                status = $code
+                family = if ($code.StartsWith("4")) { "4xx" } elseif ($code.StartsWith("5")) { "5xx" } else { "" }
+                hint = "http_$code"
+            }
+        }
+    }
+
+    if ($lower -like "*not acceptable*") {
+        return [pscustomobject]@{
+            status = "406"
+            family = "4xx"
+            hint = "http_406_not_acceptable"
+        }
+    }
+
+    if ($lower -like "*unauthorized*") {
+        return [pscustomobject]@{
+            status = "401"
+            family = "4xx"
+            hint = "http_401_unauthorized"
+        }
+    }
+
+    if ($lower -like "*forbidden*") {
+        return [pscustomobject]@{
+            status = "403"
+            family = "4xx"
+            hint = "http_403_forbidden"
+        }
+    }
+
+    if ($lower -like "*not found*") {
+        return [pscustomobject]@{
+            status = "404"
+            family = "4xx"
+            hint = "http_404_not_found"
+        }
+    }
+
+    if ($lower -like "*too many requests*") {
+        return [pscustomobject]@{
+            status = "429"
+            family = "4xx"
+            hint = "http_429_too_many_requests"
+        }
+    }
+
+    if ($lower -like "*4xx*" -or $lower -like "*client error*") {
+        return [pscustomobject]@{
+            status = "4xx"
+            family = "4xx"
+            hint = "http_4xx_unparsed"
+        }
+    }
+
+    if ($lower -like "*5xx*" -or $lower -like "*server error*") {
+        return [pscustomobject]@{
+            status = "5xx"
+            family = "5xx"
+            hint = "http_5xx_unparsed"
+        }
+    }
+
+    if ($lower -like "*server returned*" -or $lower -like "*http error*" -or $lower -like "*http response*") {
+        return [pscustomobject]@{
+            status = "unparsed"
+            family = ""
+            hint = "provider_http_error_unparsed"
+        }
+    }
+
+    return [pscustomobject]@{
+        status = ""
+        family = ""
+        hint = ""
+    }
+}
+
 function Get-EpisodeProbeFailureClassification {
     [CmdletBinding()]
     param(
@@ -732,16 +874,9 @@ function Get-EpisodeProbeFailureClassification {
     $statusLower = ([string]$EpisodeProbeStatus).ToLowerInvariant()
     $httpStatus = ""
 
-    $statusMatch = [regex]::Match($text, "(?i)(http|server returned|status|error)[^0-9]{0,20}(401|403|404|406|408|429|500|502|503|504)")
-    if ($statusMatch.Success) {
-        $httpStatus = $statusMatch.Groups[2].Value
-    }
-    else {
-        $looseMatch = [regex]::Match($text, "\b(401|403|404|406|408|429|500|502|503|504)\b")
-        if ($looseMatch.Success) {
-            $httpStatus = $looseMatch.Groups[1].Value
-        }
-    }
+    $httpSignal = Get-HttpStatusProbeSignal -Text $text
+    $httpStatus = [string]$httpSignal.status
+    $httpFamily = [string]$httpSignal.family
 
     if ($statusLower -like "*timeout*" -or $lower -like "*timed out*") {
         return [pscustomobject]@{
@@ -771,7 +906,15 @@ function Get-EpisodeProbeFailureClassification {
         return [pscustomobject]@{
             failure_class = "provider_http_error"
             http_status = $httpStatus
-            failure_diagnostic = "Provider returned an HTTP error while probing the resolved episode URL."
+            failure_diagnostic = if ($httpStatus -eq "unparsed") { "Provider returned an HTTP error while probing the resolved episode URL, but ffprobe did not expose a numeric status." } elseif ($httpStatus -eq "4xx" -or $httpStatus -eq "5xx") { "Provider returned an HTTP $httpStatus class error while probing the resolved episode URL." } else { "Provider returned HTTP $httpStatus while probing the resolved episode URL." }
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($httpFamily)) {
+        return [pscustomobject]@{
+            failure_class = "provider_http_error"
+            http_status = $httpFamily
+            failure_diagnostic = "Provider returned an HTTP $httpFamily class error while probing the resolved episode URL."
         }
     }
 
@@ -856,13 +999,9 @@ function Get-EpisodeProbeErrorHint {
         return "ffprobe_missing"
     }
 
-    $httpMatch = [regex]::Match($text, "(?i)(401|403|404|406|408|429|500|502|503|504)")
-    if ($httpMatch.Success) {
-        return "http_" + $httpMatch.Groups[1].Value
-    }
-
-    if ($lower -like "*not acceptable*") {
-        return "http_406_not_acceptable"
+    $httpSignal = Get-HttpStatusProbeSignal -Text $text
+    if (-not [string]::IsNullOrWhiteSpace([string]$httpSignal.hint)) {
+        return [string]$httpSignal.hint
     }
 
     if ($lower -like "*invalid data found*") {
@@ -927,11 +1066,16 @@ function New-EpisodeProbePreviewResult {
         [object]$PlaybackUrlSummary = $null,
         [string]$FailureClass = "",
         [string]$HttpStatus = "",
-        [string]$FailureDiagnostic = ""
+        [string]$FailureDiagnostic = "",
+        [string]$ProbeStderrSnippetRedacted = ""
     )
 
     if ($null -eq $PlaybackUrlSummary) {
         $PlaybackUrlSummary = Get-RedactedUrlSummary -Url ""
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ProbeStderrSnippetRedacted)) {
+        $ProbeStderrSnippetRedacted = $ProbeErrorSummary
     }
 
     if ([string]::IsNullOrWhiteSpace($FailureClass) -or [string]::IsNullOrWhiteSpace($FailureDiagnostic)) {
@@ -971,6 +1115,8 @@ function New-EpisodeProbePreviewResult {
         episode_probe_exit_code = $ExitCode
         probe_error_summary = $ProbeErrorSummary
         episode_probe_stderr_summary_redacted = $ProbeErrorSummary
+        episode_probe_stderr_snippet_redacted = $ProbeStderrSnippetRedacted
+        episode_probe_stderr_snippet_sha256 = if ([string]::IsNullOrWhiteSpace($ProbeStderrSnippetRedacted)) { "" } else { Get-StringSha256 -Text $ProbeStderrSnippetRedacted }
         episode_probe_error_hint = Get-EpisodeProbeErrorHint -EpisodeProbeStatus $EpisodeProbeStatus -ProbeOk $ProbeOk -ExitCode $ExitCode -ProbeErrorSummary $ProbeErrorSummary
         episode_probe_failure_class = $FailureClass
         episode_probe_http_status = $HttpStatus
@@ -1035,13 +1181,10 @@ function Get-EpisodeProbePreviewRows {
 
         try {
             $probeResult = Invoke-FfprobeUrl -Url $playbackUrl -TimeoutSec $TimeoutSec
-            $safeStderr = Get-SecretRedactedText `
+            $safeStderr = Get-SafeProbeStderrSnippet `
                 -Text ([string]$probeResult.stderr) `
-                -Secrets @($ProviderUsername, $ProviderPassword, $playbackUrl)
-
-            if ($safeStderr.Length -gt 500) {
-                $safeStderr = $safeStderr.Substring(0, 500)
-            }
+                -Secrets @($ProviderUsername, $ProviderPassword, $playbackUrl) `
+                -MaxLength 300
 
             $episodeProbeStatus = if ($probeResult.ok) { "episode_probe_ready" } else { "episode_probe_$($probeResult.status)" }
             $classification = Get-EpisodeProbeFailureClassification `
@@ -1060,16 +1203,14 @@ function Get-EpisodeProbePreviewRows {
                 -PlaybackUrlSummary $safeUrlSummary `
                 -FailureClass ([string]$classification.failure_class) `
                 -HttpStatus ([string]$classification.http_status) `
-                -FailureDiagnostic ([string]$classification.failure_diagnostic)
+                -FailureDiagnostic ([string]$classification.failure_diagnostic) `
+                -ProbeStderrSnippetRedacted $safeStderr
         }
         catch {
-            $safeError = Get-SecretRedactedText `
+            $safeError = Get-SafeProbeStderrSnippet `
                 -Text $_.Exception.Message `
-                -Secrets @($ProviderUsername, $ProviderPassword, $playbackUrl)
-
-            if ($safeError.Length -gt 500) {
-                $safeError = $safeError.Substring(0, 500)
-            }
+                -Secrets @($ProviderUsername, $ProviderPassword, $playbackUrl) `
+                -MaxLength 300
 
             $classification = Get-EpisodeProbeFailureClassification `
                 -EpisodeProbeStatus "episode_probe_exception" `
@@ -1084,7 +1225,8 @@ function Get-EpisodeProbePreviewRows {
                 -PlaybackUrlSummary $safeUrlSummary `
                 -FailureClass ([string]$classification.failure_class) `
                 -HttpStatus ([string]$classification.http_status) `
-                -FailureDiagnostic ([string]$classification.failure_diagnostic)
+                -FailureDiagnostic ([string]$classification.failure_diagnostic) `
+                -ProbeStderrSnippetRedacted $safeError
         }
     }
 
@@ -1108,6 +1250,15 @@ function Get-EpisodeProbePreviewSummary {
 
     $provider406Count = @($rows | Where-Object { $_.episode_probe_failure_class -eq "provider_unavailable_or_406" }).Count
     $providerHttpErrorCount = @($rows | Where-Object { $_.episode_probe_failure_class -eq "provider_http_error" }).Count
+    $http401Count = @($rows | Where-Object { $_.episode_probe_http_status -eq "401" }).Count
+    $http403Count = @($rows | Where-Object { $_.episode_probe_http_status -eq "403" }).Count
+    $http404Count = @($rows | Where-Object { $_.episode_probe_http_status -eq "404" }).Count
+    $http406Count = @($rows | Where-Object { $_.episode_probe_http_status -eq "406" }).Count
+    $http429Count = @($rows | Where-Object { $_.episode_probe_http_status -eq "429" }).Count
+    $http5xxCount = @($rows | Where-Object { ([string]$_.episode_probe_http_status) -like "5*" -or $_.episode_probe_http_status -eq "5xx" }).Count
+    $http4xxUnparsedCount = @($rows | Where-Object { $_.episode_probe_http_status -eq "4xx" }).Count
+    $http5xxUnparsedCount = @($rows | Where-Object { $_.episode_probe_http_status -eq "5xx" }).Count
+    $httpUnparsedCount = @($rows | Where-Object { $_.episode_probe_http_status -eq "unparsed" }).Count
     $networkErrorCount = @($rows | Where-Object { $_.episode_probe_failure_class -eq "network_error" }).Count
     $containerProbeFailedCount = @($rows | Where-Object { $_.episode_probe_failure_class -eq "container_probe_failed" }).Count
     $ffprobeMissingCount = @($rows | Where-Object { $_.episode_probe_failure_class -eq "ffprobe_missing" }).Count
@@ -1120,6 +1271,7 @@ function Get-EpisodeProbePreviewSummary {
 
     $hintValues = @($rows | ForEach-Object { [string]$_.episode_probe_error_hint } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Sort-Object -Unique)
     $hintSummary = ($hintValues -join ",")
+    $stderrSnippetCount = @($rows | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.episode_probe_stderr_snippet_redacted) }).Count
 
     return [pscustomobject]@{
         attempted_count = @($rows | Where-Object { $_.episode_probe_status -ne "episode_probe_skipped_not_resolved" }).Count
@@ -1129,6 +1281,15 @@ function Get-EpisodeProbePreviewSummary {
         skipped_count = $skippedCount
         provider_unavailable_or_406_count = $provider406Count
         provider_http_error_count = $providerHttpErrorCount
+        http_401_count = $http401Count
+        http_403_count = $http403Count
+        http_404_count = $http404Count
+        http_406_count = $http406Count
+        http_429_count = $http429Count
+        http_5xx_count = $http5xxCount
+        http_4xx_unparsed_count = $http4xxUnparsedCount
+        http_5xx_unparsed_count = $http5xxUnparsedCount
+        http_unparsed_count = $httpUnparsedCount
         network_error_count = $networkErrorCount
         container_probe_failed_count = $containerProbeFailedCount
         ffprobe_missing_count = $ffprobeMissingCount
@@ -1138,6 +1299,7 @@ function Get-EpisodeProbePreviewSummary {
         stream_empty_or_eof_count = $streamEmptyOrEofCount
         invalid_media_data_count = $invalidMediaDataCount
         codec_or_container_issue_count = $codecOrContainerIssueCount
+        stderr_snippet_count = $stderrSnippetCount
         error_hints = $hintSummary
     }
 }
@@ -1885,7 +2047,7 @@ try {
         -LogRoot $LogRoot | Out-Null
 
     if ($ProbeResolvedEpisodePreview) {
-        Write-Output "OK: series frame capture artwork worker completed. status=$($metrics.materialization_series_frame_capture_status) candidate_count=$($metrics.materialization_series_frame_capture_candidate_count) probe_success=$($metrics.materialization_series_frame_capture_probe_success_count) probe_failed=$($metrics.materialization_series_frame_capture_probe_failed_count) generated_count=$($metrics.materialization_series_frame_capture_generated_count) unplayable_count=$($metrics.materialization_series_frame_capture_unplayable_count) mode=$Mode episode_resolver_attempted=$($resolverPreviewSummary.attempted_count) episode_resolver_ready=$($resolverPreviewSummary.ready_count) episode_resolver_pending=$($resolverPreviewSummary.pending_count) episode_resolver_failed=$($resolverPreviewSummary.failed_count) episode_probe_attempted=$($episodeProbePreviewSummary.attempted_count) episode_probe_ready=$($episodeProbePreviewSummary.ready_count) episode_probe_failed=$($episodeProbePreviewSummary.failed_count) episode_probe_timeout=$($episodeProbePreviewSummary.timeout_count) episode_probe_provider_406=$($episodeProbePreviewSummary.provider_unavailable_or_406_count) episode_probe_provider_http_error=$($episodeProbePreviewSummary.provider_http_error_count) episode_probe_network_error=$($episodeProbePreviewSummary.network_error_count) episode_probe_container_failed=$($episodeProbePreviewSummary.container_probe_failed_count) episode_probe_unknown_failed=$($episodeProbePreviewSummary.unknown_probe_failure_count) episode_probe_nonzero_no_stderr=$($episodeProbePreviewSummary.ffprobe_exit_nonzero_no_stderr_count) episode_probe_eof=$($episodeProbePreviewSummary.stream_empty_or_eof_count) episode_probe_invalid_data=$($episodeProbePreviewSummary.invalid_media_data_count) episode_probe_error_hints=$($episodeProbePreviewSummary.error_hints) run_id=$script:RunId"
+        Write-Output "OK: series frame capture artwork worker completed. status=$($metrics.materialization_series_frame_capture_status) candidate_count=$($metrics.materialization_series_frame_capture_candidate_count) probe_success=$($metrics.materialization_series_frame_capture_probe_success_count) probe_failed=$($metrics.materialization_series_frame_capture_probe_failed_count) generated_count=$($metrics.materialization_series_frame_capture_generated_count) unplayable_count=$($metrics.materialization_series_frame_capture_unplayable_count) mode=$Mode episode_resolver_attempted=$($resolverPreviewSummary.attempted_count) episode_resolver_ready=$($resolverPreviewSummary.ready_count) episode_resolver_pending=$($resolverPreviewSummary.pending_count) episode_resolver_failed=$($resolverPreviewSummary.failed_count) episode_probe_attempted=$($episodeProbePreviewSummary.attempted_count) episode_probe_ready=$($episodeProbePreviewSummary.ready_count) episode_probe_failed=$($episodeProbePreviewSummary.failed_count) episode_probe_timeout=$($episodeProbePreviewSummary.timeout_count) episode_probe_provider_406=$($episodeProbePreviewSummary.provider_unavailable_or_406_count) episode_probe_provider_http_error=$($episodeProbePreviewSummary.provider_http_error_count) episode_probe_http_401=$($episodeProbePreviewSummary.http_401_count) episode_probe_http_403=$($episodeProbePreviewSummary.http_403_count) episode_probe_http_404=$($episodeProbePreviewSummary.http_404_count) episode_probe_http_406=$($episodeProbePreviewSummary.http_406_count) episode_probe_http_429=$($episodeProbePreviewSummary.http_429_count) episode_probe_http_5xx=$($episodeProbePreviewSummary.http_5xx_count) episode_probe_http_4xx_unparsed=$($episodeProbePreviewSummary.http_4xx_unparsed_count) episode_probe_http_5xx_unparsed=$($episodeProbePreviewSummary.http_5xx_unparsed_count) episode_probe_http_unparsed=$($episodeProbePreviewSummary.http_unparsed_count) episode_probe_network_error=$($episodeProbePreviewSummary.network_error_count) episode_probe_container_failed=$($episodeProbePreviewSummary.container_probe_failed_count) episode_probe_unknown_failed=$($episodeProbePreviewSummary.unknown_probe_failure_count) episode_probe_nonzero_no_stderr=$($episodeProbePreviewSummary.ffprobe_exit_nonzero_no_stderr_count) episode_probe_eof=$($episodeProbePreviewSummary.stream_empty_or_eof_count) episode_probe_invalid_data=$($episodeProbePreviewSummary.invalid_media_data_count) episode_probe_error_hints=$($episodeProbePreviewSummary.error_hints) episode_probe_stderr_snippets=$($episodeProbePreviewSummary.stderr_snippet_count) run_id=$script:RunId"
     }
     elseif ($ResolveEpisodePreview) {
         Write-Output "OK: series frame capture artwork worker completed. status=$($metrics.materialization_series_frame_capture_status) candidate_count=$($metrics.materialization_series_frame_capture_candidate_count) probe_success=$($metrics.materialization_series_frame_capture_probe_success_count) probe_failed=$($metrics.materialization_series_frame_capture_probe_failed_count) generated_count=$($metrics.materialization_series_frame_capture_generated_count) unplayable_count=$($metrics.materialization_series_frame_capture_unplayable_count) mode=$Mode episode_resolver_attempted=$($resolverPreviewSummary.attempted_count) episode_resolver_ready=$($resolverPreviewSummary.ready_count) episode_resolver_pending=$($resolverPreviewSummary.pending_count) episode_resolver_failed=$($resolverPreviewSummary.failed_count) run_id=$script:RunId"
