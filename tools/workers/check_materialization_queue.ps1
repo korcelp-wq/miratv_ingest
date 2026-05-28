@@ -24,6 +24,14 @@
 #   - materialization_queue_oldest_age_minutes
 #   - materialization_dead_letter_count
 #   - materialization_requeue_rate
+#   - materialization_queue_pending_count
+#   - materialization_queue_processing_count
+#   - materialization_queue_failed_count
+#   - materialization_queue_recent_completed_count
+#   - materialization_series_port_900_pending_count
+#   - materialization_series_port_900_needs_manual_match_count
+#   - materialization_series_port_900_failed_count
+#   - materialization_episode_lookup_missing_pending_count
 #   - worker_heartbeat_status
 #
 # Kill switch:
@@ -376,6 +384,13 @@ function Get-QueueMetricSql {
         "attempt_count", "attempts", "retry_count", "tries"
     )
 
+    $triggerReasonColumn = Get-PreferredColumn -ColumnNames $ColumnNames -PreferredNames @(
+        "trigger_reason",
+        "reason",
+        "queue_reason",
+        "materialization_reason"
+    )
+
     $statusExpr = "LOWER(COALESCE($([string](Escape-SqlIdentifier -Name $statusColumn)), 'unknown'))"
     if ([string]::IsNullOrWhiteSpace($statusColumn)) {
         $statusExpr = "'unknown'"
@@ -396,6 +411,11 @@ function Get-QueueMetricSql {
         $attemptExpr = "COALESCE($([string](Escape-SqlIdentifier -Name $attemptColumn)), 0)"
     }
 
+    $triggerReasonExpr = "''"
+    if (-not [string]::IsNullOrWhiteSpace($triggerReasonColumn)) {
+        $triggerReasonExpr = "LOWER(COALESCE($([string](Escape-SqlIdentifier -Name $triggerReasonColumn)), ''))"
+    }
+
     return @"
 SELECT
     '$TableName' AS queue_table,
@@ -407,6 +427,38 @@ SELECT
             ELSE 0
         END
     ) AS pending_count,
+    SUM(
+        CASE
+            WHEN $statusExpr IN ('pending', 'queued', 'new', 'ready', 'not_run')
+             AND $triggerReasonExpr = 'series_port_900_image_repair'
+            THEN 1
+            ELSE 0
+        END
+    ) AS series_port_900_pending_count,
+    SUM(
+        CASE
+            WHEN $statusExpr IN ('needs_manual_match', 'manual_match', 'needs_manual', 'manual_required')
+             AND $triggerReasonExpr = 'series_port_900_image_repair'
+            THEN 1
+            ELSE 0
+        END
+    ) AS series_port_900_needs_manual_match_count,
+    SUM(
+        CASE
+            WHEN $statusExpr IN ('failed', 'error', 'dead_letter', 'deadletter', 'blocked')
+             AND $triggerReasonExpr = 'series_port_900_image_repair'
+            THEN 1
+            ELSE 0
+        END
+    ) AS series_port_900_failed_count,
+    SUM(
+        CASE
+            WHEN $statusExpr IN ('pending', 'queued', 'new', 'ready', 'not_run')
+             AND $triggerReasonExpr = 'episode_lookup_missing'
+            THEN 1
+            ELSE 0
+        END
+    ) AS episode_lookup_missing_pending_count,
     SUM(
         CASE
             WHEN $statusExpr IN ('running', 'processing', 'in_progress', 'started', 'working')
@@ -526,6 +578,10 @@ function Get-QueueMetricDbRow {
             queue_table = "not_found"
             total_rows = 0
             pending_count = 0
+            series_port_900_pending_count = 0
+            series_port_900_needs_manual_match_count = 0
+            series_port_900_failed_count = 0
+            episode_lookup_missing_pending_count = 0
             in_progress_count = 0
             failed_count = 0
             dead_letter_count = 0
@@ -590,6 +646,10 @@ function Get-QueueMetrics {
     $queueTable = "not_run"
     $totalRows = 0
     $pendingCount = 0
+    $seriesPort900PendingCount = 0
+    $seriesPort900NeedsManualMatchCount = 0
+    $seriesPort900FailedCount = 0
+    $episodeLookupMissingPendingCount = 0
     $inProgressCount = 0
     $failedCount = 0
     $deadLetterCount = 0
@@ -608,6 +668,10 @@ function Get-QueueMetrics {
 
         $totalRows = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("total_rows", "row_count"))
         $pendingCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("pending_count", "pending_rows"))
+        $seriesPort900PendingCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("series_port_900_pending_count"))
+        $seriesPort900NeedsManualMatchCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("series_port_900_needs_manual_match_count"))
+        $seriesPort900FailedCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("series_port_900_failed_count"))
+        $episodeLookupMissingPendingCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("episode_lookup_missing_pending_count"))
         $inProgressCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("in_progress_count", "running_count", "processing_count"))
         $failedCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("failed_count", "error_count"))
         $deadLetterCount = Convert-ToIntSafe -Value (Get-PropertyValue -Object $MetricRow -Names @("dead_letter_count", "deadletter_count"))
@@ -653,6 +717,10 @@ function Get-QueueMetrics {
         queue_table = $queueTable
         total_rows = $totalRows
         pending_count = $pendingCount
+        series_port_900_pending_count = $seriesPort900PendingCount
+        series_port_900_needs_manual_match_count = $seriesPort900NeedsManualMatchCount
+        series_port_900_failed_count = $seriesPort900FailedCount
+        episode_lookup_missing_pending_count = $episodeLookupMissingPendingCount
         in_progress_count = $inProgressCount
         failed_count = $failedCount
         dead_letter_count = $deadLetterCount
@@ -895,6 +963,128 @@ try {
         } `
         -LogRoot $LogRoot | Out-Null
 
+    $additionalMaterializationSignals = @(
+        @{
+            SignalName = "materialization_queue_pending_count"
+            WidgetKey = "materialization.queue.pending_count"
+            Value = [int]$metrics.pending_count
+            AllowedValues = "0+"
+            Extra = @{
+                total_rows = $metrics.total_rows
+                queue_table = $metrics.queue_table
+                validation_note = $metrics.validation_note
+            }
+        },
+        @{
+            SignalName = "materialization_queue_processing_count"
+            WidgetKey = "materialization.queue.processing_count"
+            Value = [int]$metrics.in_progress_count
+            AllowedValues = "0+"
+            Extra = @{
+                queue_table = $metrics.queue_table
+                validation_note = $metrics.validation_note
+            }
+        },
+        @{
+            SignalName = "materialization_queue_failed_count"
+            WidgetKey = "materialization.queue.failed_count"
+            Value = [int]$metrics.failed_count
+            AllowedValues = "0+"
+            Extra = @{
+                dead_letter_count = $metrics.dead_letter_count
+                queue_table = $metrics.queue_table
+                validation_note = $metrics.validation_note
+            }
+        },
+        @{
+            SignalName = "materialization_queue_recent_completed_count"
+            WidgetKey = "materialization.queue.recent_completed_count"
+            Value = [int]$metrics.completed_recent_count
+            AllowedValues = "0+"
+            Extra = @{
+                queue_table = $metrics.queue_table
+                recent_completion_window_minutes = $RecentCompletionWindowMinutes
+                validation_note = $metrics.validation_note
+            }
+        },
+        @{
+            SignalName = "materialization_series_port_900_pending_count"
+            WidgetKey = "materialization.series_port_900.pending_count"
+            Value = [int]$metrics.series_port_900_pending_count
+            AllowedValues = "0+"
+            Extra = @{
+                trigger_reason = "series_port_900_image_repair"
+                queue_table = $metrics.queue_table
+                validation_note = $metrics.validation_note
+            }
+        },
+        @{
+            SignalName = "materialization_series_port_900_needs_manual_match_count"
+            WidgetKey = "materialization.series_port_900.needs_manual_match_count"
+            Value = [int]$metrics.series_port_900_needs_manual_match_count
+            AllowedValues = "0+"
+            Extra = @{
+                trigger_reason = "series_port_900_image_repair"
+                queue_table = $metrics.queue_table
+                validation_note = $metrics.validation_note
+            }
+        },
+        @{
+            SignalName = "materialization_series_port_900_failed_count"
+            WidgetKey = "materialization.series_port_900.failed_count"
+            Value = [int]$metrics.series_port_900_failed_count
+            AllowedValues = "0+"
+            Extra = @{
+                trigger_reason = "series_port_900_image_repair"
+                queue_table = $metrics.queue_table
+                validation_note = $metrics.validation_note
+            }
+        },
+        @{
+            SignalName = "materialization_episode_lookup_missing_pending_count"
+            WidgetKey = "materialization.episode_lookup_missing.pending_count"
+            Value = [int]$metrics.episode_lookup_missing_pending_count
+            AllowedValues = "0+"
+            Extra = @{
+                trigger_reason = "episode_lookup_missing"
+                queue_table = $metrics.queue_table
+                validation_note = "parked lane; do not consume until episode identity work resumes"
+            }
+        }
+    )
+
+    foreach ($signal in $additionalMaterializationSignals) {
+        $signalData = @{
+            dashboard_panel = "Materialization"
+            widget_key = $signal.WidgetKey
+            owner = "Content Ops"
+            kill_switch_name = $KillSwitchName
+            mode = $Mode
+            source_name = $metrics.source_name
+            queue_table = $metrics.queue_table
+        }
+
+        foreach ($key in $signal.Extra.Keys) {
+            $signalData[$key] = $signal.Extra[$key]
+        }
+
+        Emit-Signal `
+            -RunId $script:RunId `
+            -JobName "check_materialization_queue" `
+            -WorkerName $WorkerName `
+            -Component $Component `
+            -Environment $Environment `
+            -SignalName $signal.SignalName `
+            -P0Item "P0.6" `
+            -SignalValue ([string]$signal.Value) `
+            -ValueNum ([decimal]$signal.Value) `
+            -Status ([string]$metrics.status) `
+            -AllowedValues $signal.AllowedValues `
+            -SourceTableOrEndpoint "tools/workers/check_materialization_queue.ps1" `
+            -Data $signalData `
+            -LogRoot $LogRoot | Out-Null
+    }
+
     Write-JobLog `
         -RunId $script:RunId `
         -JobName "check_materialization_queue" `
@@ -915,6 +1105,10 @@ try {
             queue_table = $metrics.queue_table
             total_rows = $metrics.total_rows
             pending_count = $metrics.pending_count
+            series_port_900_pending_count = $metrics.series_port_900_pending_count
+            series_port_900_needs_manual_match_count = $metrics.series_port_900_needs_manual_match_count
+            series_port_900_failed_count = $metrics.series_port_900_failed_count
+            episode_lookup_missing_pending_count = $metrics.episode_lookup_missing_pending_count
             in_progress_count = $metrics.in_progress_count
             failed_count = $metrics.failed_count
             dead_letter_count = $metrics.dead_letter_count
@@ -933,7 +1127,7 @@ try {
         } `
         -LogRoot $LogRoot | Out-Null
 
-    Write-Output "OK: materialization queue check completed. result=$($metrics.materialization_queue_status) queue_table=$($metrics.queue_table) pending_count=$($metrics.pending_count) oldest_age_minutes=$($metrics.oldest_age_minutes) dead_letter_count=$($metrics.dead_letter_count) requeue_rate=$($metrics.requeue_rate) mode=$Mode run_id=$script:RunId"
+    Write-Output "OK: materialization queue check completed. result=$($metrics.materialization_queue_status) queue_table=$($metrics.queue_table) pending_count=$($metrics.pending_count) port900_pending=$($metrics.series_port_900_pending_count) port900_manual=$($metrics.series_port_900_needs_manual_match_count) episode_lookup_pending=$($metrics.episode_lookup_missing_pending_count) oldest_age_minutes=$($metrics.oldest_age_minutes) dead_letter_count=$($metrics.dead_letter_count) requeue_rate=$($metrics.requeue_rate) mode=$Mode run_id=$script:RunId"
     exit 0
 }
 catch {
