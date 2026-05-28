@@ -295,7 +295,24 @@ try {
             Recurring = $true
             RequiredSignals = @("playback_preflight_outcome", "attribution_coverage_percent", "worker_heartbeat_status")
             RequiredKillSwitch = "ENABLE_PLAYBACK_ATTRIBUTION"
-        }
+        },
+    	  @{
+    	Name = "capture_series_frame_artwork"
+    	Path = "tools\workers\capture_series_frame_artwork.ps1"
+	Recurring = $true
+    	RequiredSignals = @(
+        	"worker_heartbeat_status",
+        	"materialization_series_frame_capture_status",
+        	"materialization_series_frame_capture_candidate_count",
+        	"materialization_series_frame_capture_probe_success_count",
+        	"materialization_series_frame_capture_probe_failed_count",
+        	"materialization_series_frame_capture_generated_count",
+        	"materialization_series_frame_capture_unplayable_count",
+        	"materialization_series_frame_capture_manual_needed_count",
+        	"materialization_series_frame_capture_last_diagnostic"
+    )
+    RequiredKillSwitch = "ENABLE_FRAME_CAPTURE_ARTWORK"
+}  
     )
 
     $results = New-Object System.Collections.Generic.List[object]
