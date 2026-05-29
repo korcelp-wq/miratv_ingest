@@ -389,6 +389,13 @@ try {
             Recurring = $false
             RequiredSignals = @("provider_snapshot_delta_plan_completed")
             RequiredKillSwitch = "ENABLE_PROVIDER_SNAPSHOT_DELTA_PLAN"
+        },
+        @{
+            Name = "run_provider_snapshot_spine"
+            Path = "tools\workers\run_provider_snapshot_spine.ps1"
+            Recurring = $false
+            RequiredSignals = @("provider_snapshot_spine_runner_completed")
+            RequiredKillSwitch = "ENABLE_PROVIDER_SNAPSHOT_SPINE_RUNNER"
         }
     )
 
@@ -659,6 +666,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
