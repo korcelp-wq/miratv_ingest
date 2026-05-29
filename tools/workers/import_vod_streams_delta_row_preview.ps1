@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Preview row-level dispositions for VOD streams delta import without DB writes.
 
@@ -25,6 +25,7 @@ param(
     [string]$InputCsv,
     [string]$SnapshotPath,
     [int]$Limit = 250,
+    [switch]$AllowProviderNoiseScan,
     [switch]$Quiet
 )
 
@@ -341,6 +342,7 @@ function Get-RowDisposition {
 try {
     Invoke-ContractLog -EventName "job_started" -Status "running" -Data @{
         preview_only = $true
+        allow_provider_noise_scan = [bool]$AllowProviderNoiseScan
         db_writes    = $false
         limit        = $Limit
     }
@@ -350,6 +352,7 @@ try {
         $summary = [ordered]@{
             status       = "disabled"
             preview_only = $true
+        allow_provider_noise_scan = [bool]$AllowProviderNoiseScan
             db_writes    = $false
             run_id       = $RunId
         }
@@ -361,7 +364,8 @@ try {
 
     if ($Limit -lt 1) { $Limit = 250 }
 
-    Invoke-ContractSignal -SignalName "provider_snapshot_vod_streams_import_row_preview_completed" -SignalValue "running" -Payload @{ preview_only = $true; db_writes = $false; limit = $Limit }
+    Invoke-ContractSignal -SignalName "provider_snapshot_vod_streams_import_row_preview_completed" -SignalValue "running" -Payload @{ preview_only = $true
+        allow_provider_noise_scan = [bool]$AllowProviderNoiseScan; db_writes = $false; limit = $Limit }
 
     $lanePreviewCsv = Get-LatestLanePreviewCsv
     $laneRows = @(Import-Csv -Path $lanePreviewCsv)
@@ -388,7 +392,7 @@ try {
             category_id      = $null
             title            = $null
             container_extension = $null
-            row_disposition  = if ($laneDisposition -eq "skip_provider_noise") { "skipped_provider_noise" } else { "manual_review" }
+            row_disposition  = if ($laneDisposition -eq "skip_provider_noise" -and -not $AllowProviderNoiseScan) { "skipped_provider_noise" } else { "manual_review" }
             reason           = "lane_disposition=$laneDisposition; would_import=$wouldImport"
             would_write_db   = $false
         })
@@ -492,6 +496,7 @@ catch {
     $summary = [ordered]@{
         status       = "fail"
         preview_only = $true
+        allow_provider_noise_scan = [bool]$AllowProviderNoiseScan
         db_writes    = $false
         error        = $message
         run_id       = $RunId
@@ -503,3 +508,4 @@ catch {
     Write-Error "FAILED: VOD streams delta row preview failed. $message run_id=$RunId"
     exit 1
 }
+
