@@ -510,6 +510,13 @@ try {
             RequiredKillSwitch = "ENABLE_PROVIDER_SNAPSHOT_IMPORT_DECISION_GATE"
         },
         @{
+            Name = "run_provider_snapshot_governed_import_runner"
+            Path = "tools\workers\run_provider_snapshot_governed_import_runner.ps1"
+            Recurring = $false
+            RequiredSignals = @("provider_snapshot_governed_import_runner_completed")
+            RequiredKillSwitch = "ENABLE_PROVIDER_SNAPSHOT_GOVERNED_IMPORT_RUNNER"
+        },
+        @{
             Name = "check_grinder_disposition_contract"
             Path = "tools\workers\check_grinder_disposition_contract.ps1"
             Recurring = $false
@@ -785,6 +792,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
