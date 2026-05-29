@@ -482,6 +482,13 @@ try {
             RequiredKillSwitch = "ENABLE_VOD_STREAMS_IMPORT_ROUTE_APPLY_CONTRACT_PLANNER"
         },
         @{
+            Name = "select_next_provider_snapshot_import_candidate"
+            Path = "tools\workers\select_next_provider_snapshot_import_candidate.ps1"
+            Recurring = $false
+            RequiredSignals = @("provider_snapshot_import_candidate_selected_completed")
+            RequiredKillSwitch = "ENABLE_PROVIDER_SNAPSHOT_IMPORT_CANDIDATE_SELECTOR"
+        },
+        @{
             Name = "check_grinder_disposition_contract"
             Path = "tools\workers\check_grinder_disposition_contract.ps1"
             Recurring = $false
@@ -757,6 +764,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
