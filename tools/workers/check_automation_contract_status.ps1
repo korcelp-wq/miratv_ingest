@@ -475,6 +475,13 @@ try {
             RequiredKillSwitch = "ENABLE_DEFERRED_PARTIAL_SALVAGE_QUEUE_PLANNER"
         },
         @{
+            Name = "plan_vod_streams_import_route_apply_contract"
+            Path = "tools\workers\plan_vod_streams_import_route_apply_contract.ps1"
+            Recurring = $false
+            RequiredSignals = @("vod_streams_import_route_apply_contract_planned_completed")
+            RequiredKillSwitch = "ENABLE_VOD_STREAMS_IMPORT_ROUTE_APPLY_CONTRACT_PLANNER"
+        },
+        @{
             Name = "check_grinder_disposition_contract"
             Path = "tools\workers\check_grinder_disposition_contract.ps1"
             Recurring = $false
@@ -750,6 +757,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
