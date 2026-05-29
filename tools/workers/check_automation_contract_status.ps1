@@ -426,6 +426,13 @@ try {
             RequiredKillSwitch = "ENABLE_PROVIDER_SNAPSHOT_VOD_STREAMS_IMPORT_ROW_PREVIEW"
         },
         @{
+            Name = "summarize_provider_snapshot_import_readiness"
+            Path = "tools\workers\summarize_provider_snapshot_import_readiness.ps1"
+            Recurring = $false
+            RequiredSignals = @("provider_snapshot_import_readiness_summary_completed")
+            RequiredKillSwitch = "ENABLE_PROVIDER_SNAPSHOT_IMPORT_READINESS_SUMMARY"
+        },
+        @{
             Name = "check_grinder_disposition_contract"
             Path = "tools\workers\check_grinder_disposition_contract.ps1"
             Recurring = $false
@@ -701,6 +708,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
