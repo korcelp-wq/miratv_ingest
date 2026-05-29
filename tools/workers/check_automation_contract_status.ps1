@@ -489,6 +489,13 @@ try {
             RequiredKillSwitch = "ENABLE_PROVIDER_SNAPSHOT_IMPORT_CANDIDATE_SELECTOR"
         },
         @{
+            Name = "simulate_provider_snapshot_import_candidate"
+            Path = "tools\workers\simulate_provider_snapshot_import_candidate.ps1"
+            Recurring = $false
+            RequiredSignals = @("provider_snapshot_import_candidate_simulated_completed")
+            RequiredKillSwitch = "ENABLE_PROVIDER_SNAPSHOT_IMPORT_CANDIDATE_SIMULATOR"
+        },
+        @{
             Name = "check_grinder_disposition_contract"
             Path = "tools\workers\check_grinder_disposition_contract.ps1"
             Recurring = $false
@@ -764,6 +771,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
