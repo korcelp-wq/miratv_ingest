@@ -315,17 +315,32 @@ $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
 
 $rows = @()
 
-foreach ($laneName in @("series_lane", "epg_lane")) {
-    if (-not ($manifest.PSObject.Properties.Name -contains $laneName)) {
-        continue
-    }
+$laneNames = @(
+    $manifest.PSObject.Properties.Name |
+        Where-Object {
+            $_ -like "*_lane" -or
+            $_ -eq "provider_pull_spine"
+        }
+)
 
+foreach ($laneName in $laneNames) {
     foreach ($step in Convert-ToArrayLocal -Value $manifest.$laneName) {
-        $stepLabel = [string]$step.step_order
-        $rows += Test-ManifestPathEntry -Entry $step -Lane $laneName -ParentStep $stepLabel -CurrentRoot $CurrentRoot -IncludeServerPaths:$IncludeServerPaths
+        $stepLabel = if ($step.PSObject.Properties.Name -contains "step_order") { [string]$step.step_order } else { "" }
+
+        $rows += Test-ManifestPathEntry `
+            -Entry $step `
+            -Lane $laneName `
+            -ParentStep $stepLabel `
+            -CurrentRoot $CurrentRoot `
+            -IncludeServerPaths:$IncludeServerPaths
 
         foreach ($sub in Convert-ToArrayLocal -Value $step.subfiles) {
-            $rows += Test-ManifestPathEntry -Entry $sub -Lane $laneName -ParentStep $stepLabel -CurrentRoot $CurrentRoot -IncludeServerPaths:$IncludeServerPaths
+            $rows += Test-ManifestPathEntry `
+                -Entry $sub `
+                -Lane $laneName `
+                -ParentStep $stepLabel `
+                -CurrentRoot $CurrentRoot `
+                -IncludeServerPaths:$IncludeServerPaths
         }
     }
 }
@@ -334,6 +349,7 @@ $outDir = Split-Path -Parent $OutputPath
 New-DirectoryIfMissingLocal -Path $outDir
 
 $rows | Export-Csv -LiteralPath $OutputPath -NoTypeInformation -Encoding UTF8
+
 
 $total = @($rows).Count
 $localRows = @($rows | Where-Object { $_.path_type -eq "local" })

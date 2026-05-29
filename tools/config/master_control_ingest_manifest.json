@@ -1,6 +1,6 @@
 {
   "manifest_name": "master_control_ingest_manifest",
-  "version": "2026-05-29T00:00:00Z",
+  "version": "2026-05-29Tprovider-pull-spine",
   "current_system_root": "C:\\miratv_ingest",
   "clean_system_root": "C:\\miraTV_ingest_clean",
   "nomenclature_rule": {
@@ -396,6 +396,274 @@
       "migration_status": "current_system_evidence",
       "contract_gap": "needs bounded loop, kill switch, logging, heartbeat/progress, signal",
       "secret_risk": "import_token_risk"
+    }
+  ],
+  "provider_pull_spine": [
+    {
+      "step_order": "PULL-ROOT",
+      "parent_file_uploaded": "spine_master_import.bat",
+      "actual_file_hint": "spine_master_import.bat",
+      "current_relative_path": "workers\\spine\\spine_master_import.bat",
+      "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\spine_master_import.bat",
+      "role": "provider_pull_spine_orchestrator",
+      "lane": "provider_pull_spine",
+      "execution_type": "batch_orchestrator",
+      "purpose": "Legacy/current provider pull spine entry point for Live, VOD, Series, and EPG acquisition.",
+      "subfiles": [
+        {
+          "sub_order": "PULL-LIVE-CAT",
+          "uploaded_file": "pull_live_cat_trigger.bat",
+          "actual_file_hint": "pull_live_cat_trigger.bat",
+          "current_relative_path": "workers\\spine\\triggers\\pull_live_cat_trigger.bat",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\triggers\\pull_live_cat_trigger.bat",
+          "role": "provider_pull_trigger",
+          "purpose": "Trigger provider Live category pull."
+        },
+        {
+          "sub_order": "PULL-LIVE-STREAMS",
+          "uploaded_file": "pull_live_streams_trigger.bat",
+          "actual_file_hint": "pull_live_streams_trigger.bat",
+          "current_relative_path": "workers\\spine\\triggers\\pull_live_streams_trigger.bat",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\triggers\\pull_live_streams_trigger.bat",
+          "role": "provider_pull_trigger",
+          "purpose": "Trigger provider Live streams pull."
+        },
+        {
+          "sub_order": "PULL-VOD-CAT",
+          "uploaded_file": "pull_vod_cat_trigger.bat",
+          "actual_file_hint": "pull_vod_cat_trigger.bat",
+          "current_relative_path": "workers\\spine\\triggers\\pull_vod_cat_trigger.bat",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\triggers\\pull_vod_cat_trigger.bat",
+          "role": "provider_pull_trigger",
+          "purpose": "Trigger provider VOD category pull."
+        },
+        {
+          "sub_order": "PULL-VOD-STREAMS",
+          "uploaded_file": "pull_vod_streams_trigger.bat",
+          "actual_file_hint": "pull_vod_streams_trigger.bat",
+          "current_relative_path": "workers\\spine\\triggers\\pull_vod_streams_trigger.bat",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\triggers\\pull_vod_streams_trigger.bat",
+          "role": "provider_pull_trigger",
+          "purpose": "Trigger provider VOD streams pull."
+        },
+        {
+          "sub_order": "PULL-SERIES",
+          "uploaded_file": "pull_series_trigger.bat",
+          "actual_file_hint": "pull_series_trigger.bat",
+          "current_relative_path": "workers\\spine\\triggers\\pull_series_trigger.bat",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\triggers\\pull_series_trigger.bat",
+          "role": "provider_pull_trigger",
+          "purpose": "Trigger provider Series pull."
+        },
+        {
+          "sub_order": "PULL-SERIES-PS1",
+          "uploaded_file": "pull_series_trigger.ps1",
+          "actual_file_hint": "pull_series_trigger.ps1",
+          "current_relative_path": "workers\\spine\\triggers\\pull_series_trigger.ps1",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\triggers\\pull_series_trigger.ps1",
+          "role": "provider_pull_trigger",
+          "purpose": "PowerShell trigger/provider Series pull wrapper."
+        },
+        {
+          "sub_order": "PULL-EPG",
+          "uploaded_file": "pull_epg_trigger.bat",
+          "actual_file_hint": "pull_epg_trigger.bat",
+          "current_relative_path": "workers\\spine\\triggers\\pull_epg_trigger.bat",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\triggers\\pull_epg_trigger.bat",
+          "role": "provider_pull_trigger",
+          "purpose": "Trigger provider EPG/XMLTV pull."
+        }
+      ],
+      "clean_repo_target": "rebuild_as_governed_delta_spine",
+      "migration_status": "current_system_evidence",
+      "contract_gap": "needs governed orchestrator, per-media subcomponent logging, signal, kill switch, bounded execution",
+      "secret_risk": "provider_credential_or_domain_risk"
+    },
+    {
+      "step_order": "PULL-WORKERS",
+      "parent_file_uploaded": "pull_*_worker.ps1",
+      "actual_file_hint": "workers\\spine\\workers\\pull_*_worker.ps1",
+      "current_relative_path": "workers\\spine\\workers",
+      "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\workers",
+      "role": "provider_pull_worker_group",
+      "lane": "provider_pull_spine",
+      "execution_type": "worker_group",
+      "purpose": "Provider API pull workers that acquire Live/VOD/Series/EPG payloads into local raw/state folders.",
+      "subfiles": [
+        {
+          "sub_order": "LIVE-CAT-WORKER",
+          "uploaded_file": "pull_live_cat_worker.ps1",
+          "actual_file_hint": "pull_live_cat_worker.ps1",
+          "current_relative_path": "workers\\spine\\workers\\pull_live_cat_worker.ps1",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\workers\\pull_live_cat_worker.ps1",
+          "role": "provider_pull_worker",
+          "purpose": "Pull Live categories from provider."
+        },
+        {
+          "sub_order": "LIVE-STREAMS-WORKER",
+          "uploaded_file": "pull_live_streams_worker.ps1",
+          "actual_file_hint": "pull_live_streams_worker.ps1",
+          "current_relative_path": "workers\\spine\\workers\\pull_live_streams_worker.ps1",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\workers\\pull_live_streams_worker.ps1",
+          "role": "provider_pull_worker",
+          "purpose": "Pull Live streams from provider."
+        },
+        {
+          "sub_order": "VOD-CAT-WORKER",
+          "uploaded_file": "pull_vod_cat_worker.ps1",
+          "actual_file_hint": "pull_vod_cat_worker.ps1",
+          "current_relative_path": "workers\\spine\\workers\\pull_vod_cat_worker.ps1",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\workers\\pull_vod_cat_worker.ps1",
+          "role": "provider_pull_worker",
+          "purpose": "Pull VOD categories from provider."
+        },
+        {
+          "sub_order": "VOD-STREAMS-WORKER",
+          "uploaded_file": "pull_vod_streams_worker.ps1",
+          "actual_file_hint": "pull_vod_streams_worker.ps1",
+          "current_relative_path": "workers\\spine\\workers\\pull_vod_streams_worker.ps1",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\workers\\pull_vod_streams_worker.ps1",
+          "role": "provider_pull_worker",
+          "purpose": "Pull VOD streams from provider."
+        },
+        {
+          "sub_order": "SERIES-WORKER",
+          "uploaded_file": "pull_series_worker.ps1",
+          "actual_file_hint": "pull_series_worker.ps1",
+          "current_relative_path": "workers\\spine\\workers\\pull_series_worker.ps1",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\workers\\pull_series_worker.ps1",
+          "role": "provider_pull_worker",
+          "purpose": "Pull Series catalog from provider."
+        },
+        {
+          "sub_order": "EPG-WORKER",
+          "uploaded_file": "pull_epg_worker.ps1",
+          "actual_file_hint": "pull_epg_worker.ps1",
+          "current_relative_path": "workers\\spine\\workers\\pull_epg_worker.ps1",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\workers\\pull_epg_worker.ps1",
+          "role": "provider_pull_worker",
+          "purpose": "Pull provider EPG/XMLTV data."
+        }
+      ],
+      "clean_repo_target": "rebuild_as_provider_snapshot_pull_workers",
+      "migration_status": "current_system_evidence",
+      "contract_gap": "needs governed worker contract and provider domain/secret abstraction",
+      "secret_risk": "provider_credential_or_domain_risk"
+    },
+    {
+      "step_order": "IMPORT-CALLS",
+      "parent_file_uploaded": "import_*.ps1",
+      "actual_file_hint": "workers\\spine\\call\\import_*.ps1",
+      "current_relative_path": "workers\\spine\\call",
+      "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\call",
+      "role": "provider_payload_import_group",
+      "lane": "provider_pull_spine",
+      "execution_type": "import_call_group",
+      "purpose": "Import locally acquired provider payloads into DB/server-side ingest endpoints.",
+      "subfiles": [
+        {
+          "sub_order": "IMPORT-LIVE-CAT",
+          "uploaded_file": "import_live_categories.ps1",
+          "actual_file_hint": "import_live_categories.ps1",
+          "current_relative_path": "workers\\spine\\call\\import_live_categories.ps1",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\call\\import_live_categories.ps1",
+          "role": "provider_payload_import",
+          "purpose": "Import Live categories."
+        },
+        {
+          "sub_order": "IMPORT-LIVE-CHANNELS",
+          "uploaded_file": "import_live_channels.ps1",
+          "actual_file_hint": "import_live_channels.ps1",
+          "current_relative_path": "workers\\spine\\call\\import_live_channels.ps1",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\call\\import_live_channels.ps1",
+          "role": "provider_payload_import",
+          "purpose": "Import Live channels/streams."
+        },
+        {
+          "sub_order": "IMPORT-VOD-CAT",
+          "uploaded_file": "import_vod_categories.ps1",
+          "actual_file_hint": "import_vod_categories.ps1",
+          "current_relative_path": "workers\\spine\\call\\import_vod_categories.ps1",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\call\\import_vod_categories.ps1",
+          "role": "provider_payload_import",
+          "purpose": "Import VOD categories."
+        },
+        {
+          "sub_order": "IMPORT-VOD-STREAMS",
+          "uploaded_file": "import_vod_streams.ps1",
+          "actual_file_hint": "import_vod_streams.ps1",
+          "current_relative_path": "workers\\spine\\call\\import_vod_streams.ps1",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\call\\import_vod_streams.ps1",
+          "role": "provider_payload_import",
+          "purpose": "Import VOD streams."
+        },
+        {
+          "sub_order": "IMPORT-SERIES",
+          "uploaded_file": "import_series_json.ps1",
+          "actual_file_hint": "import_series_json.ps1",
+          "current_relative_path": "workers\\spine\\call\\import_series_json.ps1",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\call\\import_series_json.ps1",
+          "role": "provider_payload_import",
+          "purpose": "Import Series JSON."
+        },
+        {
+          "sub_order": "IMPORT-EPG",
+          "uploaded_file": "import_epg.ps1",
+          "actual_file_hint": "import_epg.ps1",
+          "current_relative_path": "workers\\spine\\call\\import_epg.ps1",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\call\\import_epg.ps1",
+          "role": "provider_payload_import",
+          "purpose": "Import EPG."
+        },
+        {
+          "sub_order": "IMPORT-EPG-CHUNKED",
+          "uploaded_file": "import_epg_chunked.ps1",
+          "actual_file_hint": "import_epg_chunked.ps1",
+          "current_relative_path": "workers\\spine\\call\\import_epg_chunked.ps1",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\call\\import_epg_chunked.ps1",
+          "role": "provider_payload_import",
+          "purpose": "Import EPG in chunks."
+        }
+      ],
+      "clean_repo_target": "rebuild_as_delta_import_or_enqueue_workers",
+      "migration_status": "current_system_evidence",
+      "contract_gap": "needs governed import contract, dry-run planning, and bounded writes",
+      "secret_risk": "endpoint_or_import_token_risk"
+    },
+    {
+      "step_order": "PULL-STATE",
+      "parent_file_uploaded": "state markers",
+      "actual_file_hint": "workers\\spine\\state\\*.last",
+      "current_relative_path": "workers\\spine\\state",
+      "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\state",
+      "role": "provider_pull_state_markers",
+      "lane": "provider_pull_spine",
+      "execution_type": "state_marker_group",
+      "purpose": "Existing state marker files that indicate the old spine already tracked last pull state for at least Live and VOD streams.",
+      "subfiles": [
+        {
+          "sub_order": "STATE-LIVE",
+          "uploaded_file": "live_streams.last",
+          "actual_file_hint": "live_streams.last",
+          "current_relative_path": "workers\\spine\\state\\live_streams.last",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\state\\live_streams.last",
+          "role": "state_marker",
+          "purpose": "Live streams last-state marker."
+        },
+        {
+          "sub_order": "STATE-VOD",
+          "uploaded_file": "vod_streams.last",
+          "actual_file_hint": "vod_streams.last",
+          "current_relative_path": "workers\\spine\\state\\vod_streams.last",
+          "current_absolute_path": "C:\\miratv_ingest\\workers\\spine\\state\\vod_streams.last",
+          "role": "state_marker",
+          "purpose": "VOD streams last-state marker."
+        }
+      ],
+      "clean_repo_target": "replace_with_provider_inventory_snapshot_state",
+      "migration_status": "current_system_evidence",
+      "contract_gap": "state markers should be replaced by structured snapshot/delta records",
+      "secret_risk": "low"
     }
   ]
 }
