@@ -333,6 +333,13 @@ try {
             Recurring = $false
             RequiredSignals = @("provider_pull_spine_inspection_completed")
             RequiredKillSwitch = "ENABLE_PROVIDER_PULL_SPINE_INSPECTION"
+        },
+        @{
+            Name = "inspect_provider_account_context"
+            Path = "tools\workers\inspect_provider_account_context.ps1"
+            Recurring = $false
+            RequiredSignals = @("provider_account_context_inspection_completed")
+            RequiredKillSwitch = "ENABLE_PROVIDER_ACCOUNT_CONTEXT_INSPECTION"
         }
     )
 
@@ -603,6 +610,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
