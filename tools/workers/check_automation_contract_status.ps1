@@ -368,6 +368,13 @@ try {
             Recurring = $false
             RequiredSignals = @("provider_live_streams_snapshot_completed")
             RequiredKillSwitch = "ENABLE_PROVIDER_LIVE_STREAMS_SNAPSHOT"
+        },
+        @{
+            Name = "build_provider_vod_streams_snapshot"
+            Path = "tools\workers\build_provider_vod_streams_snapshot.ps1"
+            Recurring = $false
+            RequiredSignals = @("provider_vod_streams_snapshot_completed")
+            RequiredKillSwitch = "ENABLE_PROVIDER_VOD_STREAMS_SNAPSHOT"
         }
     )
 
@@ -638,6 +645,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
