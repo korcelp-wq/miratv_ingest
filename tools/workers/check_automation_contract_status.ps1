@@ -396,6 +396,13 @@ try {
             Recurring = $false
             RequiredSignals = @("provider_snapshot_spine_runner_completed")
             RequiredKillSwitch = "ENABLE_PROVIDER_SNAPSHOT_SPINE_RUNNER"
+        },
+        @{
+            Name = "check_grinder_disposition_contract"
+            Path = "tools\workers\check_grinder_disposition_contract.ps1"
+            Recurring = $false
+            RequiredSignals = @("grinder_disposition_contract_completed")
+            RequiredKillSwitch = "ENABLE_GRINDER_DISPOSITION_CONTRACT_CHECK"
         }
     )
 
@@ -666,6 +673,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
