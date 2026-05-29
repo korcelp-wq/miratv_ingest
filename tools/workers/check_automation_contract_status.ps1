@@ -454,6 +454,27 @@ try {
             RequiredKillSwitch = "ENABLE_PROVIDER_SNAPSHOT_GOVERNED_REFRESH_GATE"
         },
         @{
+            Name = "normalize_master_control_manifest_to_import_route_registry"
+            Path = "tools\workers\normalize_master_control_manifest_to_import_route_registry.ps1"
+            Recurring = $false
+            RequiredSignals = @("master_control_route_registry_normalized_completed")
+            RequiredKillSwitch = "ENABLE_MASTER_CONTROL_ROUTE_REGISTRY_NORMALIZER"
+        },
+        @{
+            Name = "classify_master_control_worker_functions"
+            Path = "tools\workers\classify_master_control_worker_functions.ps1"
+            Recurring = $false
+            RequiredSignals = @("master_control_worker_functions_classified_completed")
+            RequiredKillSwitch = "ENABLE_MASTER_CONTROL_WORKER_FUNCTION_CLASSIFIER"
+        },
+        @{
+            Name = "plan_deferred_partial_salvage_queue"
+            Path = "tools\workers\plan_deferred_partial_salvage_queue.ps1"
+            Recurring = $false
+            RequiredSignals = @("deferred_partial_salvage_queue_planned_completed")
+            RequiredKillSwitch = "ENABLE_DEFERRED_PARTIAL_SALVAGE_QUEUE_PLANNER"
+        },
+        @{
             Name = "check_grinder_disposition_contract"
             Path = "tools\workers\check_grinder_disposition_contract.ps1"
             Recurring = $false
@@ -729,6 +750,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
