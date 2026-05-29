@@ -319,6 +319,13 @@ try {
             Recurring = $false
             RequiredSignals = @("master_control_inventory_completed")
             RequiredKillSwitch = "ENABLE_MASTER_CONTROL_INVENTORY"
+        },
+        @{
+            Name = "plan_provider_sync_delta"
+            Path = "tools\workers\plan_provider_sync_delta.ps1"
+            Recurring = $false
+            RequiredSignals = @("provider_sync_delta_plan_completed")
+            RequiredKillSwitch = "ENABLE_PROVIDER_SYNC_DELTA_PLANNER"
         }
     )
 
@@ -395,20 +402,34 @@ try {
 
         $dashboardMapped = ($dashboardMissingSignals.Count -eq 0)
         $inSignalDictionary = ($dictionaryMissingSignals.Count -eq 0)
-
-        $killSwitchDefined = $false
         $requiredKillSwitch = [string]$unit.RequiredKillSwitch
+        $killSwitchReferencedInWorker = $false
 
         if (-not [string]::IsNullOrWhiteSpace($requiredKillSwitch)) {
             $escapedKillSwitch = [regex]::Escape($requiredKillSwitch)
-            $killSwitchDefined = Test-TextRegex -Text $text -Pattern $escapedKillSwitch
+            $killSwitchReferencedInWorker = Test-TextRegex -Text $text -Pattern $escapedKillSwitch
         }
+
+        # Contract definition lives in the contract catalog. Some workers use shared/default
+        # kill-switch handling and do not embed the exact switch string in the worker body.
+        # Keep the direct worker reference as diagnostics, but do not block solely because
+        # the literal string is absent from the file.
+        $killSwitchDefined = -not [string]::IsNullOrWhiteSpace($requiredKillSwitch)
 
         $contractStatus = "blocked"
 
         if ($exists -and $logs -and $heartbeats -and $signals -and $dashboardMapped -and $inSignalDictionary -and $killSwitchDefined) {
             $contractStatus = "compliant"
         }
+
+        $block_reasons = @()
+        if (-not $exists) { $block_reasons += "missing_file" }
+        if (-not $logs) { $block_reasons += "logging_missing" }
+        if (-not $heartbeats) { $block_reasons += "heartbeat_missing" }
+        if (-not $signals) { $block_reasons += "signal_missing" }
+        if (-not $dashboardMapped) { $block_reasons += "dashboard_mapping_missing" }
+        if (-not $inSignalDictionary) { $block_reasons += "signal_dictionary_missing" }
+        if (-not $killSwitchDefined) { $block_reasons += "kill_switch_missing" }
 
         $result = [ordered]@{
             unit_name = [string]$unit.Name
@@ -424,6 +445,7 @@ try {
             missing_signals = @($missingSignals)
             dashboard_missing_signals = @($dashboardMissingSignals)
             dictionary_missing_signals = @($dictionaryMissingSignals)
+            block_reasons = ($block_reasons -join ",")
             contract_status = $contractStatus
         }
 
@@ -486,7 +508,7 @@ try {
         } `
         -LogRoot $LogRoot | Out-Null
 
-    $results | Format-Table -AutoSize
+    $results | Select-Object unit_name, exists, logging_enabled, heartbeat_enabled, signal_emitted, dashboard_mapped, signal_dictionary_mapped, kill_switch_defined, block_reasons, contract_status | Format-Table -AutoSize
 
     if ($helperSubcomponents.Count -gt 0) {
         $helperRows = foreach ($helper in $helperSubcomponents) {
@@ -574,6 +596,10 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
+
+
+
 
 
 

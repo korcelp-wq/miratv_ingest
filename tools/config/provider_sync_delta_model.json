@@ -1,0 +1,152 @@
+{
+  "model_name": "provider_sync_delta_model",
+  "version": "2026-05-29",
+  "operating_principle": "Bulk ingest is for bootstrap. Delta sync is for normal operations.",
+  "current_assumption": "The database is mostly populated; normal refresh should identify deltas, missing data, stale data, and repair candidates rather than reprocessing all content.",
+  "media_types": {
+    "live": {
+      "identity_keys": [
+        "provider",
+        "provider_stream_id",
+        "mac_user_id"
+      ],
+      "change_fields": [
+        "name",
+        "clean_search_name",
+        "provider_category_id",
+        "provider_category_name",
+        "logo_url",
+        "epg_channel_id",
+        "stream_type",
+        "bouquet/access availability",
+        "country/language/region classification",
+        "canonical_channel/dedupe state"
+      ],
+      "delta_questions": [
+        "Which streams are new?",
+        "Which streams disappeared or became unavailable?",
+        "Which category/bouquet/access mappings changed?",
+        "Which logo/artwork values are missing, inaccessible, or changed?",
+        "Which EPG channel IDs are missing or no longer joining?",
+        "Which dedupe/canonical mappings need refresh?"
+      ],
+      "normal_action": "Refresh only changed/new/stale Live rows and availability/cache records.",
+      "fallback_action": "Full Live refresh only when snapshot identity drift or schema drift is detected."
+    },
+    "vod": {
+      "identity_keys": [
+        "provider",
+        "provider_vod_id",
+        "mac_user_id"
+      ],
+      "change_fields": [
+        "title",
+        "clean_search_name",
+        "container_extension",
+        "category_id/category_name",
+        "poster_url",
+        "cover_url",
+        "backdrop_url",
+        "release_year",
+        "duration",
+        "metadata_status",
+        "bouquet/access availability"
+      ],
+      "delta_questions": [
+        "Which VOD IDs are new?",
+        "Which VOD IDs disappeared or became stale?",
+        "Which title/container/category fields changed?",
+        "Which rows have missing or bad artwork?",
+        "Which rows have missing or stale TMDb/enriched metadata?",
+        "Which rows need playability/access validation?"
+      ],
+      "normal_action": "Queue only new/stale/missing VOD metadata, artwork, and playability work.",
+      "fallback_action": "Full VOD refresh only when provider catalog identity changed massively or local catalog is missing."
+    },
+    "series": {
+      "identity_keys": [
+        "provider",
+        "provider_series_id",
+        "mac_user_id"
+      ],
+      "change_fields": [
+        "series title",
+        "clean_search_name",
+        "category_id/category_name",
+        "poster/cover/backdrop",
+        "season_count",
+        "episode_count",
+        "episode_id",
+        "container_extension",
+        "season/episode structure",
+        "metadata_status",
+        "bouquet/access availability"
+      ],
+      "delta_questions": [
+        "Which series IDs are new?",
+        "Which series IDs disappeared or became stale?",
+        "Which seasons or episodes are new?",
+        "Which episode IDs/container extensions changed?",
+        "Which series are missing season/episode structure?",
+        "Which series need artwork/metadata repair?"
+      ],
+      "normal_action": "Update only changed series parents, seasons, episodes, metadata, and artwork candidates.",
+      "fallback_action": "Use old grinder logic only as evidence/reference or when provider structure changes."
+    },
+    "epg": {
+      "identity_keys": [
+        "provider",
+        "xmltv_channel_id",
+        "program_start_time",
+        "program_end_time"
+      ],
+      "change_fields": [
+        "epg.xml hash",
+        "file size",
+        "file timestamp",
+        "channel IDs",
+        "program title",
+        "start_time",
+        "end_time",
+        "live channel join status",
+        "import batch position",
+        "freshness horizon"
+      ],
+      "delta_questions": [
+        "Did the XMLTV file hash change?",
+        "Which channel IDs are new, removed, or renamed?",
+        "Which program windows are new or changed?",
+        "Which EPG joins are missing or broken?",
+        "Is the current guide horizon stale?",
+        "Does import need reset, continue, or skip?"
+      ],
+      "normal_action": "Import only if file hash/range changed or guide horizon is stale.",
+      "fallback_action": "Full EPG import only when reset is intentional or join validation fails broadly."
+    }
+  },
+  "plan_buckets": [
+    "skip_no_change",
+    "refresh_identity_delta",
+    "refresh_availability_delta",
+    "metadata_repair",
+    "artwork_repair",
+    "playback_validation",
+    "epg_import_needed",
+    "manual_review"
+  ],
+  "future_tables_or_views": [
+    "provider_inventory_snapshot",
+    "provider_inventory_delta",
+    "content_update_plan",
+    "materialization_queue",
+    "support_playback_cases"
+  ],
+  "safety": {
+    "dry_run_default": true,
+    "no_db_writes_in_planner": true,
+    "no_provider_mutation": true,
+    "no_uploads": true,
+    "no_artwork_writeback": true,
+    "no_playback_suppression": true
+  }
+}
