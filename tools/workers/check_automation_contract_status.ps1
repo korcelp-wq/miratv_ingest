@@ -496,6 +496,13 @@ try {
             RequiredKillSwitch = "ENABLE_PROVIDER_SNAPSHOT_IMPORT_CANDIDATE_SIMULATOR"
         },
         @{
+            Name = "apply_vod_streams_delta_limited"
+            Path = "tools\workers\apply_vod_streams_delta_limited.ps1"
+            Recurring = $false
+            RequiredSignals = @("vod_streams_delta_limited_apply_completed")
+            RequiredKillSwitch = "ENABLE_VOD_STREAMS_DELTA_LIMITED_APPLY"
+        },
+        @{
             Name = "check_grinder_disposition_contract"
             Path = "tools\workers\check_grinder_disposition_contract.ps1"
             Recurring = $false
@@ -771,6 +778,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
