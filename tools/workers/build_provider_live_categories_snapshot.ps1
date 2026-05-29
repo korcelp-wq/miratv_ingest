@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Build a governed Live categories provider snapshot for one MiraTV account.
 
@@ -365,6 +365,71 @@ function Get-JsonCountSafeLocal {
     }
 }
 
+function Get-NormalizedLiveCategoryTextLocal {
+    param([string]$Text)
+
+    try {
+        $json = $Text | ConvertFrom-Json -ErrorAction Stop
+        $items = @()
+
+        if ($json -is [array]) {
+            $items = @($json)
+        }
+        elseif ($null -ne $json -and ($json.PSObject.Properties.Name -contains "data") -and $json.data -is [array]) {
+            $items = @($json.data)
+        }
+        else {
+            return ""
+        }
+
+        $normalizedRows = @(
+            $items |
+                ForEach-Object {
+                    $categoryId = ""
+                    $categoryName = ""
+
+                    if ($_.PSObject.Properties.Name -contains "category_id") {
+                        $categoryId = [string]$_.category_id
+                    }
+                    elseif ($_.PSObject.Properties.Name -contains "id") {
+                        $categoryId = [string]$_.id
+                    }
+
+                    if ($_.PSObject.Properties.Name -contains "category_name") {
+                        $categoryName = [string]$_.category_name
+                    }
+                    elseif ($_.PSObject.Properties.Name -contains "name") {
+                        $categoryName = [string]$_.name
+                    }
+
+                    $categoryId = $categoryId.Trim()
+                    $categoryName = $categoryName.Trim()
+
+                    if (-not [string]::IsNullOrWhiteSpace($categoryId) -or -not [string]::IsNullOrWhiteSpace($categoryName)) {
+                        "$categoryId|$categoryName"
+                    }
+                } |
+                Sort-Object -Unique
+        )
+
+        return ($normalizedRows -join [Environment]::NewLine)
+    }
+    catch {
+        return ""
+    }
+}
+
+function Get-NormalizedLiveCategoryHashLocal {
+    param([string]$Text)
+
+    $normalized = Get-NormalizedLiveCategoryTextLocal -Text $Text
+    if ([string]::IsNullOrWhiteSpace($normalized)) {
+        return ""
+    }
+
+    return Get-Sha256OfTextLocal -Text $normalized
+}
+
 function Get-LatestPriorSnapshotLocal {
     param(
         [string]$Directory,
@@ -563,12 +628,16 @@ try {
     Set-Content -LiteralPath $snapshotPath -Value ([string]$providerResult.body) -Encoding UTF8
 
     $sha256 = Get-Sha256OfTextLocal -Text ([string]$providerResult.body)
+    $normalizedSha256 = Get-NormalizedLiveCategoryHashLocal -Text ([string]$providerResult.body)
     $itemCount = Get-JsonCountSafeLocal -Text ([string]$providerResult.body)
     $snapshotLength = (Get-Item -LiteralPath $snapshotPath).Length
 
     $prior = Get-LatestPriorSnapshotLocal -Directory $accountSnapshotDir -CurrentPath $snapshotPath
     $priorHash = ""
+    $priorNormalizedHash = ""
     $priorPath = ""
+    $rawChanged = $true
+    $normalizedChanged = $true
     $changed = $true
     $changeStatus = "first_snapshot"
 
@@ -576,8 +645,24 @@ try {
         $priorPath = $prior.FullName
         $priorBody = Get-Content -LiteralPath $prior.FullName -Raw -ErrorAction SilentlyContinue
         $priorHash = Get-Sha256OfTextLocal -Text ([string]$priorBody)
-        $changed = ($priorHash -ne $sha256)
-        $changeStatus = if ($changed) { "changed" } else { "unchanged" }
+        $priorNormalizedHash = Get-NormalizedLiveCategoryHashLocal -Text ([string]$priorBody)
+
+        $rawChanged = ($priorHash -ne $sha256)
+        $normalizedChanged = ($priorNormalizedHash -ne $normalizedSha256)
+
+        # DB/import decisions should eventually key off normalized category change,
+        # not raw provider JSON byte ordering/formatting.
+        $changed = $normalizedChanged
+
+        if ($normalizedChanged) {
+            $changeStatus = "changed"
+        }
+        elseif ($rawChanged) {
+            $changeStatus = "raw_changed_normalized_unchanged"
+        }
+        else {
+            $changeStatus = "unchanged"
+        }
     }
 
     $reportRow = [pscustomobject]@{
@@ -596,9 +681,13 @@ try {
         snapshot_path = $snapshotPath
         snapshot_length = [int64]$snapshotLength
         snapshot_sha256 = $sha256
+        normalized_snapshot_sha256 = $normalizedSha256
         item_count_estimate = $itemCount
         prior_snapshot_path = $priorPath
         prior_snapshot_sha256 = $priorHash
+        prior_normalized_snapshot_sha256 = $priorNormalizedHash
+        raw_changed = [bool]$rawChanged
+        normalized_changed = [bool]$normalizedChanged
         change_status = $changeStatus
         changed = [bool]$changed
         db_imported = $false
@@ -635,8 +724,12 @@ try {
         snapshot_path = $snapshotPath
         snapshot_length = [int64]$snapshotLength
         snapshot_sha256 = $sha256
+        normalized_snapshot_sha256 = $normalizedSha256
         prior_snapshot_path = $priorPath
         prior_snapshot_sha256 = $priorHash
+        prior_normalized_snapshot_sha256 = $priorNormalizedHash
+        raw_changed = [bool]$rawChanged
+        normalized_changed = [bool]$normalizedChanged
         change_status = $changeStatus
         changed = [bool]$changed
         report_csv = $reportCsv
@@ -759,6 +852,3 @@ catch {
     Write-Error "FAILED: provider live categories snapshot failed. run_id=$script:RunId $errorMessage"
     exit 1
 }
-
-
-
