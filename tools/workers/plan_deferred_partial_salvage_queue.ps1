@@ -5,15 +5,10 @@
 .DESCRIPTION
   Read-only planner for deferred salvage.
 
-  This worker does not repair JSON, does not call Ollama, does not import, and does not
-  write to a database. It inventories likely failed/partial artifacts so the main ingest
-  path can continue while salvage work is queued for later.
+  The main ingest path continues processing whatever it can. Failed/partial/malformed
+  artifacts are inventoried into a deferred queue for later repair/salvage work.
 
-  Design intent:
-    - Grinders/workers continue processing what they can.
-    - Failed or partial artifacts become queued salvage candidates.
-    - Salvage is deferred and disposition-driven.
-    - Partial information is treated as information value, not as fatal JSON failure.
+  No provider calls. No DB reads. No DB writes. No imports.
 
 .CONTRACT-MARKERS
   Write-JobLog
@@ -60,12 +55,9 @@ function Get-DurationMs {
 }
 
 function Write-LocalJsonLog {
-    param(
-        [string]$EventName,
-        [string]$Status,
-        [object]$Data = $null
-    )
+    param([string]$EventName, [string]$Status, [object]$Data = $null)
 
+    # Contract marker: Write-JobLog
     $record = [ordered]@{
         event_ts        = (Get-Date).ToUniversalTime().ToString("o")
         event_name      = $EventName
@@ -88,11 +80,7 @@ function Write-LocalJsonLog {
 }
 
 function Emit-LocalSignal {
-    param(
-        [string]$SignalName,
-        [object]$SignalValue,
-        [object]$Payload = $null
-    )
+    param([string]$SignalName, [object]$SignalValue, [object]$Payload = $null)
 
     # Contract marker: Emit-Signal
     Write-LocalJsonLog -EventName "signal_emitted" -Status "ok" -Data ([ordered]@{
@@ -112,20 +100,18 @@ function Emit-LocalHeartbeat {
 function Test-WorkerKillSwitch {
     # Contract marker: Test-KillSwitch
     $raw = [Environment]::GetEnvironmentVariable($KillSwitchName)
-    if ([string]::IsNullOrWhiteSpace($raw)) {
-        return $true
-    }
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $true }
 
     $normalized = $raw.Trim().ToLowerInvariant()
     return ($normalized -notin @("0", "false", "no", "off", "disabled"))
 }
 
 function Get-CandidateRoots {
-    $roots = New-Object System.Collections.Generic.List[string]
+    $roots = @()
 
     if (-not [string]::IsNullOrWhiteSpace($SourceRoot)) {
         if (Test-Path -LiteralPath $SourceRoot) {
-            $roots.Add((Resolve-Path -LiteralPath $SourceRoot).Path) | Out-Null
+            $roots += (Resolve-Path -LiteralPath $SourceRoot).Path
         }
     }
 
@@ -138,7 +124,7 @@ function Get-CandidateRoots {
         (Join-Path $RepoRoot "runtime\partial")
     )) {
         if (Test-Path -LiteralPath $candidate) {
-            $roots.Add((Resolve-Path -LiteralPath $candidate).Path) | Out-Null
+            $roots += (Resolve-Path -LiteralPath $candidate).Path
         }
     }
 
@@ -155,7 +141,7 @@ function Get-CandidateRoots {
             "C:\miratv_ingest\workers"
         )) {
             if (Test-Path -LiteralPath $candidate) {
-                $roots.Add((Resolve-Path -LiteralPath $candidate).Path) | Out-Null
+                $roots += (Resolve-Path -LiteralPath $candidate).Path
             }
         }
     }
@@ -168,72 +154,38 @@ function Get-CandidateReason {
 
     $path = $File.FullName.ToLowerInvariant()
     $name = $File.Name.ToLowerInvariant()
+    $reasons = @()
 
-    $reasons = New-Object System.Collections.Generic.List[string]
+    if ($path -match "quarantine|failed|error|reject|bad|partial|manual") { $reasons += "path_indicates_failed_or_partial" }
+    if ($name -match "fail|failed|error|reject|bad|partial|malformed|manual|unknown") { $reasons += "filename_indicates_failed_or_partial" }
+    if ($path -match "grinder|arrays|normaliz|router|pickup|series_sep") { $reasons += "path_indicates_grinder_or_shape_processing" }
+    if ($File.Extension -match "\.json|\.txt|\.log|\.ndjson|\.jsonl") { $reasons += "file_type_candidate_for_salvage" }
+    if ($File.Length -eq 0) { $reasons += "empty_file" }
+    elseif ($File.Length -lt 32) { $reasons += "very_small_file" }
 
-    if ($path -match "quarantine|failed|error|reject|bad|partial|manual") {
-        $reasons.Add("path_indicates_failed_or_partial") | Out-Null
-    }
-
-    if ($name -match "fail|failed|error|reject|bad|partial|malformed|manual|unknown") {
-        $reasons.Add("filename_indicates_failed_or_partial") | Out-Null
-    }
-
-    if ($path -match "grinder|arrays|normaliz|router|pickup|series_sep") {
-        $reasons.Add("path_indicates_grinder_or_shape_processing") | Out-Null
-    }
-
-    if ($File.Extension -match "\.json|\.txt|\.log|\.ndjson|\.jsonl") {
-        $reasons.Add("file_type_candidate_for_salvage") | Out-Null
-    }
-
-    if ($File.Length -eq 0) {
-        $reasons.Add("empty_file") | Out-Null
-    }
-    elseif ($File.Length -lt 32) {
-        $reasons.Add("very_small_file") | Out-Null
-    }
-
-    if ($reasons.Count -eq 0) {
-        return "candidate_by_scan_scope"
-    }
-
-    return ($reasons.ToArray() -join "|")
+    if (@($reasons).Count -eq 0) { return "candidate_by_scan_scope" }
+    return ($reasons -join "|")
 }
 
 function Get-LightweightJsonStatus {
     param([System.IO.FileInfo]$File)
 
-    if ($File.Length -eq 0) {
-        return "empty_file"
-    }
-
-    if ($File.Length -gt 1048576) {
-        return "not_checked_large_file"
-    }
+    if ($File.Length -eq 0) { return "empty_file" }
+    if ($File.Length -gt 1048576) { return "not_checked_large_file" }
 
     try {
         $raw = Get-Content -LiteralPath $File.FullName -Raw -ErrorAction Stop
-
-        if ([string]::IsNullOrWhiteSpace($raw)) {
-            return "empty_or_whitespace"
-        }
+        if ([string]::IsNullOrWhiteSpace($raw)) { return "empty_or_whitespace" }
 
         $trimmed = $raw.Trim()
-
-        if (-not ($trimmed.StartsWith("{") -or $trimmed.StartsWith("["))) {
-            return "non_json_text_or_fragment"
-        }
+        if (-not ($trimmed.StartsWith("{") -or $trimmed.StartsWith("["))) { return "non_json_text_or_fragment" }
 
         try {
             $null = $trimmed | ConvertFrom-Json -ErrorAction Stop
             return "valid_json"
         }
         catch {
-            if ($trimmed -match "\{.*\}" -or $trimmed -match "\[.*\]") {
-                return "fragment_json_or_malformed_json"
-            }
-
+            if ($trimmed -match "\{.*\}" -or $trimmed -match "\[.*\]") { return "fragment_json_or_malformed_json" }
             return "invalid_json"
         }
     }
@@ -243,36 +195,19 @@ function Get-LightweightJsonStatus {
 }
 
 function Get-SalvageStatusGuess {
-    param(
-        [System.IO.FileInfo]$File,
-        [string]$JsonStatus,
-        [string]$CandidateReason
-    )
+    param([System.IO.FileInfo]$File, [string]$JsonStatus, [string]$CandidateReason)
 
     $text = ($File.FullName + " " + $File.Name + " " + $JsonStatus + " " + $CandidateReason).ToLowerInvariant()
 
     if ($JsonStatus -eq "valid_json") {
-        if ($text -match "failed|quarantine|partial|manual") {
-            return "valid_json_but_queued_for_review"
-        }
+        if ($text -match "failed|quarantine|partial|manual") { return "valid_json_but_queued_for_review" }
         return "not_salvage_needed_valid_json"
     }
 
-    if ($JsonStatus -eq "empty_file" -or $JsonStatus -eq "empty_or_whitespace") {
-        return "unrecoverable_empty"
-    }
-
-    if ($JsonStatus -eq "fragment_json_or_malformed_json") {
-        return "partial_fragment_salvage_candidate"
-    }
-
-    if ($JsonStatus -eq "non_json_text_or_fragment") {
-        return "metadata_or_text_fragment_candidate"
-    }
-
-    if ($JsonStatus -eq "not_checked_large_file") {
-        return "large_file_deferred_shape_check"
-    }
+    if ($JsonStatus -eq "empty_file" -or $JsonStatus -eq "empty_or_whitespace") { return "unrecoverable_empty" }
+    if ($JsonStatus -eq "fragment_json_or_malformed_json") { return "partial_fragment_salvage_candidate" }
+    if ($JsonStatus -eq "non_json_text_or_fragment") { return "metadata_or_text_fragment_candidate" }
+    if ($JsonStatus -eq "not_checked_large_file") { return "large_file_deferred_shape_check" }
 
     return "manual_review"
 }
@@ -292,9 +227,7 @@ function Get-MinimumTrustGateGuess {
 }
 
 try {
-    if ($Limit -lt 1) {
-        $Limit = 500
-    }
+    if ($Limit -lt 1) { $Limit = 500 }
 
     Write-LocalJsonLog -EventName "job_started" -Status "running" -Data ([ordered]@{
         preview_only = $true
@@ -322,13 +255,11 @@ try {
     }
 
     $roots = @(Get-CandidateRoots)
-    $rows = New-Object System.Collections.Generic.List[object]
+    $rows = @()
     $seen = @{}
 
     foreach ($root in $roots) {
-        if ($rows.Count -ge $Limit) {
-            break
-        }
+        if (@($rows).Count -ge $Limit) { break }
 
         $files = Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue |
             Where-Object {
@@ -344,16 +275,10 @@ try {
             Sort-Object LastWriteTimeUtc -Descending
 
         foreach ($file in $files) {
-            if ($rows.Count -ge $Limit) {
-                break
-            }
-
-            if ($seen.ContainsKey($file.FullName)) {
-                continue
-            }
+            if (@($rows).Count -ge $Limit) { break }
+            if ($seen.ContainsKey($file.FullName)) { continue }
 
             $seen[$file.FullName] = $true
-
             $candidateReason = Get-CandidateReason -File $file
 
             if ($candidateReason -eq "candidate_by_scan_scope" -and $file.FullName -notmatch "quarantine|failed|partial|pickup|series_sep|grinder|arrays|normaliz|router") {
@@ -363,14 +288,10 @@ try {
             $jsonStatus = Get-LightweightJsonStatus -File $file
             $salvageStatus = Get-SalvageStatusGuess -File $file -JsonStatus $jsonStatus -CandidateReason $candidateReason
             $trustGate = Get-MinimumTrustGateGuess -SalvageStatus $salvageStatus
+            $needsReview = ($salvageStatus -ne "not_salvage_needed_valid_json")
 
-            $needsReview = $true
-            if ($salvageStatus -eq "not_salvage_needed_valid_json") {
-                $needsReview = $false
-            }
-
-            $rows.Add([pscustomobject][ordered]@{
-                queue_order = $rows.Count + 1
+            $rows += [pscustomobject][ordered]@{
+                queue_order = @($rows).Count + 1
                 source_file = $file.FullName
                 source_root = $root
                 file_name = $file.Name
@@ -387,7 +308,7 @@ try {
                 needs_review = $needsReview
                 db_writes = $false
                 provider_calls = $false
-            }) | Out-Null
+            }
         }
     }
 
@@ -400,9 +321,7 @@ try {
     $largeDeferredCount = @($rows | Where-Object { $_.json_status -eq "not_checked_large_file" }).Count
 
     $status = "pass"
-    if ($reviewCount -gt 0) {
-        $status = "warning"
-    }
+    if ($reviewCount -gt 0) { $status = "warning" }
 
     $timestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
     $queueCsv = Join-Path $OutputRoot "deferred_partial_salvage_queue_$timestamp.csv"

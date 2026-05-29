@@ -6,17 +6,8 @@
   Read-only worker that consumes the latest unified import route registry and classifies
   each route by what it does first, then how mature/clear the idea appears.
 
-  Primary classification:
-    - function_family
-
-  Secondary classification:
-    - work_style
-    - track_guess
-    - maturity_stage
-    - clarity_level
-
-  This avoids relying on creation date, filename, or "grinder" naming because the old
-  system evolved chaotically and some ideas matured at different times.
+  This version avoids typed generic lists and uses simple PowerShell arrays to avoid
+  "Argument types do not match" runtime failures.
 
   No provider calls.
   No DB reads.
@@ -66,12 +57,9 @@ function Get-DurationMs {
 }
 
 function Write-LocalJsonLog {
-    param(
-        [string]$EventName,
-        [string]$Status,
-        [object]$Data = $null
-    )
+    param([string]$EventName, [string]$Status, [object]$Data = $null)
 
+    # Contract marker: Write-JobLog
     $record = [ordered]@{
         event_ts        = (Get-Date).ToUniversalTime().ToString("o")
         event_name      = $EventName
@@ -94,11 +82,7 @@ function Write-LocalJsonLog {
 }
 
 function Emit-LocalSignal {
-    param(
-        [string]$SignalName,
-        [object]$SignalValue,
-        [object]$Payload = $null
-    )
+    param([string]$SignalName, [object]$SignalValue, [object]$Payload = $null)
 
     # Contract marker: Emit-Signal
     Write-LocalJsonLog -EventName "signal_emitted" -Status "ok" -Data ([ordered]@{
@@ -118,9 +102,7 @@ function Emit-LocalHeartbeat {
 function Test-WorkerKillSwitch {
     # Contract marker: Test-KillSwitch
     $raw = [Environment]::GetEnvironmentVariable($KillSwitchName)
-    if ([string]::IsNullOrWhiteSpace($raw)) {
-        return $true
-    }
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $true }
 
     $normalized = $raw.Trim().ToLowerInvariant()
     return ($normalized -notin @("0", "false", "no", "off", "disabled"))
@@ -154,17 +136,13 @@ function Get-LatestRegistryCsv {
 function Get-Field {
     param([object]$Row, [string]$Name, [string]$Default = "")
 
-    if ($null -eq $Row) {
-        return $Default
-    }
+    if ($null -eq $Row) { return $Default }
 
     $property = $Row.PSObject.Properties |
         Where-Object { $_.Name -ieq $Name } |
         Select-Object -First 1
 
-    if ($null -eq $property -or $null -eq $property.Value) {
-        return $Default
-    }
+    if ($null -eq $property -or $null -eq $property.Value) { return $Default }
 
     return [string]$property.Value
 }
@@ -222,6 +200,7 @@ function Get-WorkStyle {
     $text = Get-CombinedText -Row $Row
 
     if ($FunctionFamily -eq "platform_governance") { return "platform_control" }
+
     if ($FunctionFamily -eq "enrich_metadata") {
         if ($text -match "tmdb") { return "tmdb_enrichment" }
         if ($text -match "ai|openai|ollama") { return "ai_arbitration_or_legacy_ai" }
@@ -282,13 +261,10 @@ function Get-MaturityStage {
 }
 
 function Get-ClarityLevel {
-    param([object]$Row, [string]$FunctionFamily, [string]$WorkStyle, [string]$MaturityStage)
-
-    $text = Get-CombinedText -Row $Row
+    param([string]$FunctionFamily, [string]$WorkStyle, [string]$MaturityStage)
 
     if ($FunctionFamily -ne "unknown_review" -and $WorkStyle -ne "manual_or_unknown" -and $MaturityStage -ne "unknown_review") {
-        if ($text -match "purpose") { return "clear" }
-        return "mostly_clear"
+        return "clear"
     }
 
     if ($FunctionFamily -ne "unknown_review" -or $WorkStyle -ne "manual_or_unknown") {
@@ -301,9 +277,7 @@ function Get-ClarityLevel {
 function Get-EnrichmentStrategy {
     param([object]$Row, [string]$FunctionFamily)
 
-    if ($FunctionFamily -ne "enrich_metadata") {
-        return "not_enrichment"
-    }
+    if ($FunctionFamily -ne "enrich_metadata") { return "not_enrichment" }
 
     $text = Get-CombinedText -Row $Row
     $hasAi = ($text -match "ai|openai|ollama|chat|completion|embedding")
@@ -321,13 +295,7 @@ function Get-EnrichmentStrategy {
 }
 
 function Get-CanonicalCandidate {
-    param(
-        [string]$FunctionFamily,
-        [string]$WorkStyle,
-        [string]$TrackGuess,
-        [string]$MaturityStage,
-        [string]$ClarityLevel
-    )
+    param([string]$FunctionFamily, [string]$WorkStyle, [string]$TrackGuess, [string]$MaturityStage)
 
     if ($FunctionFamily -eq "platform_governance") { return $true }
     if ($TrackGuess -eq "new_method_track" -and $MaturityStage -ne "unknown_review") { return $true }
@@ -338,12 +306,7 @@ function Get-CanonicalCandidate {
 }
 
 function Get-ReplacementCandidate {
-    param(
-        [string]$FunctionFamily,
-        [string]$WorkStyle,
-        [string]$TrackGuess,
-        [string]$MaturityStage
-    )
+    param([string]$FunctionFamily, [string]$TrackGuess, [string]$MaturityStage)
 
     if ($TrackGuess -eq "legacy_track" -and $FunctionFamily -in @("grind_extract_records", "import_to_database_or_server", "orchestrate_workflow")) {
         return $true
@@ -362,14 +325,10 @@ function Get-RecommendedAction {
         [string]$WorkStyle,
         [string]$TrackGuess,
         [string]$MaturityStage,
-        [string]$EnrichmentStrategy,
-        [bool]$CanonicalCandidate,
-        [bool]$ReplacementCandidate
+        [string]$EnrichmentStrategy
     )
 
-    if ($FunctionFamily -eq "platform_governance") {
-        return "keep_as_platform_control"
-    }
+    if ($FunctionFamily -eq "platform_governance") { return "keep_as_platform_control" }
 
     if ($FunctionFamily -eq "enrich_metadata") {
         if ($EnrichmentStrategy -eq "tmdb_primary") { return "promote_tmdb_as_primary_enrichment" }
@@ -383,41 +342,14 @@ function Get-RecommendedAction {
         return "replace_with_governed_delta_import_or_enqueue_worker"
     }
 
-    if ($FunctionFamily -eq "server_side_ingest") {
-        return "wrap_with_php_logging_signal_killswitch_adapter_before_canonical_use"
-    }
-
-    if ($FunctionFamily -eq "upload_artifacts") {
-        return "rewrite_with_secure_upload_bounded_retry"
-    }
-
-    if ($FunctionFamily -eq "query_helper") {
-        return "register_as_adapter_dependency_after_inspection"
-    }
-
-    if ($FunctionFamily -in @("grind_extract_records", "separate_raw_payload_shapes")) {
-        return "compare_against_faster_shape_processor_then_retire_legacy_after_validation"
-    }
-
-    if ($FunctionFamily -in @("route_payload", "normalize_payload")) {
-        return "preserve_if_output_contract_is_still_needed"
-    }
-
-    if ($FunctionFamily -eq "acquire_provider_data") {
-        return "compare_against_provider_snapshot_spine_and_retire_duplicate"
-    }
-
-    if ($FunctionFamily -eq "clean_or_quarantine_files") {
-        return "wrap_as_safe_cleanup_with_dry_run"
-    }
-
-    if ($FunctionFamily -eq "orchestrate_workflow") {
-        return "replace_with_governed_runner_or_keep_as_reference"
-    }
-
-    if ($FunctionFamily -eq "unknown_review") {
-        return "manual_review"
-    }
+    if ($FunctionFamily -eq "server_side_ingest") { return "wrap_with_php_logging_signal_killswitch_adapter_before_canonical_use" }
+    if ($FunctionFamily -eq "upload_artifacts") { return "rewrite_with_secure_upload_bounded_retry" }
+    if ($FunctionFamily -eq "query_helper") { return "register_as_adapter_dependency_after_inspection" }
+    if ($FunctionFamily -in @("grind_extract_records", "separate_raw_payload_shapes")) { return "compare_against_faster_shape_processor_then_retire_legacy_after_validation" }
+    if ($FunctionFamily -in @("route_payload", "normalize_payload")) { return "preserve_if_output_contract_is_still_needed" }
+    if ($FunctionFamily -eq "acquire_provider_data") { return "compare_against_provider_snapshot_spine_and_retire_duplicate" }
+    if ($FunctionFamily -eq "clean_or_quarantine_files") { return "wrap_as_safe_cleanup_with_dry_run" }
+    if ($FunctionFamily -eq "orchestrate_workflow") { return "replace_with_governed_runner_or_keep_as_reference" }
 
     return "manual_review"
 }
@@ -448,19 +380,18 @@ try {
 
     $registryPath = Get-LatestRegistryCsv
     $registryRows = @(Import-Csv -LiteralPath $registryPath)
-
-    $rows = New-Object System.Collections.Generic.List[object]
+    $rows = @()
 
     foreach ($row in $registryRows) {
         $functionFamily = Get-FunctionFamily -Row $row
         $workStyle = Get-WorkStyle -Row $row -FunctionFamily $functionFamily
         $trackGuess = Get-TrackGuess -Row $row -FunctionFamily $functionFamily -WorkStyle $workStyle
         $maturityStage = Get-MaturityStage -Row $row -FunctionFamily $functionFamily -WorkStyle $workStyle -TrackGuess $trackGuess
-        $clarityLevel = Get-ClarityLevel -Row $row -FunctionFamily $functionFamily -WorkStyle $workStyle -MaturityStage $maturityStage
+        $clarityLevel = Get-ClarityLevel -FunctionFamily $functionFamily -WorkStyle $workStyle -MaturityStage $maturityStage
         $enrichmentStrategy = Get-EnrichmentStrategy -Row $row -FunctionFamily $functionFamily
-        $canonical = Get-CanonicalCandidate -FunctionFamily $functionFamily -WorkStyle $workStyle -TrackGuess $trackGuess -MaturityStage $maturityStage -ClarityLevel $clarityLevel
-        $replacement = Get-ReplacementCandidate -FunctionFamily $functionFamily -WorkStyle $workStyle -TrackGuess $trackGuess -MaturityStage $maturityStage
-        $recommended = Get-RecommendedAction -FunctionFamily $functionFamily -WorkStyle $workStyle -TrackGuess $trackGuess -MaturityStage $maturityStage -EnrichmentStrategy $enrichmentStrategy -CanonicalCandidate $canonical -ReplacementCandidate $replacement
+        $canonical = Get-CanonicalCandidate -FunctionFamily $functionFamily -WorkStyle $workStyle -TrackGuess $trackGuess -MaturityStage $maturityStage
+        $replacement = Get-ReplacementCandidate -FunctionFamily $functionFamily -TrackGuess $trackGuess -MaturityStage $maturityStage
+        $recommended = Get-RecommendedAction -FunctionFamily $functionFamily -WorkStyle $workStyle -TrackGuess $trackGuess -MaturityStage $maturityStage -EnrichmentStrategy $enrichmentStrategy
 
         $needsReview = $false
         if ($functionFamily -eq "unknown_review" -or $workStyle -eq "manual_or_unknown" -or $clarityLevel -in @("partial", "unclear") -or $recommended -eq "manual_review") {
@@ -471,7 +402,7 @@ try {
             $needsReview = $true
         }
 
-        $rows.Add([pscustomobject][ordered]@{
+        $rows += [pscustomobject][ordered]@{
             route_key = Get-Field $row "route_key"
             lane = Get-Field $row "lane"
             source_lane_name = Get-Field $row "source_lane_name"
@@ -502,7 +433,7 @@ try {
             migration_status = Get-Field $row "migration_status"
             contract_gap = Get-Field $row "contract_gap"
             secret_risk = Get-Field $row "secret_risk"
-        }) | Out-Null
+        }
     }
 
     $totalCount = @($rows).Count

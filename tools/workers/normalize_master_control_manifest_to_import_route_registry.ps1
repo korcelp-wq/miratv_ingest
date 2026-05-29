@@ -3,16 +3,10 @@
   Normalize the master control ingest manifest into a unified import route registry.
 
 .DESCRIPTION
-  Read-only worker that consumes:
-    tools/config/master_control_ingest_manifest.json
+  Read-only worker that consumes tools/config/master_control_ingest_manifest.json and
+  flattens lane entries/subfiles into a route registry.
 
-  It flattens lane entries and subfiles into a route registry that can later be used by
-  controlled import/apply workers to choose the approved route instead of guessing.
-
-  No provider calls.
-  No DB reads.
-  No DB writes.
-  No imports.
+  No provider calls. No DB reads. No DB writes. No imports.
 
 .CONTRACT-MARKERS
   Write-JobLog
@@ -57,12 +51,9 @@ function Get-DurationMs {
 }
 
 function Write-LocalJsonLog {
-    param(
-        [string]$EventName,
-        [string]$Status,
-        [object]$Data = $null
-    )
+    param([string]$EventName, [string]$Status, [object]$Data = $null)
 
+    # Contract marker: Write-JobLog
     $record = [ordered]@{
         event_ts        = (Get-Date).ToUniversalTime().ToString("o")
         event_name      = $EventName
@@ -85,11 +76,7 @@ function Write-LocalJsonLog {
 }
 
 function Emit-LocalSignal {
-    param(
-        [string]$SignalName,
-        [object]$SignalValue,
-        [object]$Payload = $null
-    )
+    param([string]$SignalName, [object]$SignalValue, [object]$Payload = $null)
 
     # Contract marker: Emit-Signal
     Write-LocalJsonLog -EventName "signal_emitted" -Status "ok" -Data ([ordered]@{
@@ -109,9 +96,7 @@ function Emit-LocalHeartbeat {
 function Test-WorkerKillSwitch {
     # Contract marker: Test-KillSwitch
     $raw = [Environment]::GetEnvironmentVariable($KillSwitchName)
-    if ([string]::IsNullOrWhiteSpace($raw)) {
-        return $true
-    }
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $true }
 
     $normalized = $raw.Trim().ToLowerInvariant()
     return ($normalized -notin @("0", "false", "no", "off", "disabled"))
@@ -120,78 +105,39 @@ function Test-WorkerKillSwitch {
 function Get-TextValue {
     param([object]$Object, [string]$Name, [string]$Default = "")
 
-    if ($null -eq $Object) {
-        return $Default
-    }
+    if ($null -eq $Object) { return $Default }
 
     $property = $Object.PSObject.Properties |
         Where-Object { $_.Name -ieq $Name } |
         Select-Object -First 1
 
-    if ($null -eq $property -or $null -eq $property.Value) {
-        return $Default
-    }
-
+    if ($null -eq $property -or $null -eq $property.Value) { return $Default }
     return [string]$property.Value
 }
 
 function Get-RouteType {
-    param(
-        [string]$Path,
-        [string]$Role,
-        [string]$ExecutionType,
-        [string]$Purpose
-    )
+    param([string]$Path, [string]$Role, [string]$ExecutionType, [string]$Purpose)
 
     $text = ("$Path $Role $ExecutionType $Purpose").ToLowerInvariant()
 
-    if ($text -match "server:/.*\.php|server_side|endpoint|remote_import|remote_trigger|remote_materialization") {
-        return "php_endpoint_or_server_worker"
-    }
-
-    if ($text -match "ftp_upload|upload_trigger|upload ") {
-        return "server_upload"
-    }
-
-    if ($text -match "query_content|query_helper") {
-        return "query_helper"
-    }
-
-    if ($text -match "import_.*\.ps1|provider_payload_import|import_call") {
-        return "powershell_import_wrapper"
-    }
-
-    if ($text -match "pull_.*worker|provider_pull_worker") {
-        return "provider_pull_worker"
-    }
-
-    if ($text -match "grinder") {
-        return "local_grinder_worker"
-    }
-
-    if ($text -match "trigger|\.bat") {
-        return "trigger_or_orchestrator"
-    }
-
-    if ($text -match "\.ps1") {
-        return "local_powershell_worker"
-    }
+    if ($text -match "server:/.*\.php|server_side|endpoint|remote_import|remote_trigger|remote_materialization") { return "php_endpoint_or_server_worker" }
+    if ($text -match "ftp_upload|upload_trigger|upload ") { return "server_upload" }
+    if ($text -match "query_content|query_helper") { return "query_helper" }
+    if ($text -match "import_.*\.ps1|provider_payload_import|import-call|import_call") { return "powershell_import_wrapper" }
+    if ($text -match "pull_.*worker|provider_pull_worker|snapshot") { return "provider_pull_worker" }
+    if ($text -match "grinder") { return "local_grinder_worker" }
+    if ($text -match "trigger|\.bat|runner") { return "trigger_or_orchestrator" }
+    if ($text -match "\.ps1") { return "local_powershell_worker" }
 
     return "unknown"
 }
 
 function Get-MediaTypeGuess {
-    param(
-        [string]$Lane,
-        [string]$Path,
-        [string]$Role,
-        [string]$Purpose,
-        [string]$SubOrder
-    )
+    param([string]$Lane, [string]$Path, [string]$Role, [string]$Purpose, [string]$SubOrder)
 
     $text = ("$Lane $Path $Role $Purpose $SubOrder").ToLowerInvariant()
 
-    if ($text -match "vod") { return "vod" }
+    if ($text -match "vod|movie") { return "vod" }
     if ($text -match "live|channel") { return "live" }
     if ($text -match "series|episode|season") { return "series" }
     if ($text -match "epg|xmltv") { return "epg" }
@@ -200,106 +146,54 @@ function Get-MediaTypeGuess {
 }
 
 function Get-OperationGuess {
-    param(
-        [string]$Path,
-        [string]$Role,
-        [string]$ExecutionType,
-        [string]$Purpose
-    )
+    param([string]$Path, [string]$Role, [string]$ExecutionType, [string]$Purpose)
 
     $text = ("$Path $Role $ExecutionType $Purpose").ToLowerInvariant()
 
     if ($text -match "import") { return "import" }
     if ($text -match "upload") { return "upload" }
-    if ($text -match "pull|download|provider api") { return "pull" }
+    if ($text -match "pull|download|provider api|snapshot") { return "pull" }
     if ($text -match "grind|extract|normalize|clean") { return "transform" }
     if ($text -match "materialize") { return "materialize" }
     if ($text -match "finalize") { return "finalize" }
     if ($text -match "route") { return "route" }
     if ($text -match "state") { return "state" }
-    if ($text -match "trigger|orchestrator") { return "orchestrate" }
+    if ($text -match "trigger|orchestrator|runner") { return "orchestrate" }
 
     return "unknown"
 }
 
 function Get-RiskLevel {
-    param(
-        [string]$RouteType,
-        [string]$Operation,
-        [string]$SecretRisk,
-        [string]$ContractGap,
-        [string]$Path
-    )
+    param([string]$RouteType, [string]$Operation, [string]$SecretRisk, [string]$ContractGap, [string]$Path)
 
     $text = ("$RouteType $Operation $SecretRisk $ContractGap $Path").ToLowerInvariant()
 
-    if ($text -match "token|secret|credential|endpoint_or_import_token|provider_credential") {
-        return "high"
-    }
-
-    if ($text -match "import|server_worker|php_endpoint|server_upload|db|write|bounded writes") {
-        return "medium_high"
-    }
-
-    if ($text -match "grinder|transform|local_worker") {
-        return "medium"
-    }
+    if ($text -match "token|secret|credential|endpoint_or_import_token|provider_credential") { return "high" }
+    if ($text -match "import|server_worker|php_endpoint|server_upload|db|write|bounded writes") { return "medium_high" }
+    if ($text -match "grinder|transform|local_worker") { return "medium" }
 
     return "low_to_unknown"
 }
 
 function Get-RecommendedAction {
-    param(
-        [string]$RouteType,
-        [string]$Operation,
-        [string]$MediaType,
-        [string]$MigrationStatus,
-        [string]$CleanRepoTarget
-    )
+    param([string]$RouteType, [string]$Operation, [string]$MediaType, [string]$MigrationStatus, [string]$CleanRepoTarget)
 
     $text = ("$RouteType $Operation $MediaType $MigrationStatus $CleanRepoTarget").ToLowerInvariant()
 
-    if ($text -match "provider_payload_import|delta_import|enqueue|import") {
-        return "wrap_as_governed_delta_import_or_enqueue_worker"
-    }
-
-    if ($RouteType -eq "php_endpoint_or_server_worker") {
-        return "add_php_logging_signal_killswitch_adapter_before_use"
-    }
-
-    if ($RouteType -eq "server_upload") {
-        return "rewrite_with_secure_upload_bounded_retry"
-    }
-
-    if ($RouteType -eq "query_helper") {
-        return "inspect_query_helper_and_register_as_adapter_dependency"
-    }
-
-    if ($RouteType -eq "provider_pull_worker") {
-        return "already_replaced_by_provider_snapshot_spine_or_compare_for_gap"
-    }
-
-    if ($RouteType -eq "local_grinder_worker") {
-        return "fold_into_row_resilient_disposition_grinder_contract"
-    }
+    if ($text -match "provider_payload_import|delta_import|enqueue|import") { return "wrap_as_governed_delta_import_or_enqueue_worker" }
+    if ($RouteType -eq "php_endpoint_or_server_worker") { return "add_php_logging_signal_killswitch_adapter_before_use" }
+    if ($RouteType -eq "server_upload") { return "rewrite_with_secure_upload_bounded_retry" }
+    if ($RouteType -eq "query_helper") { return "inspect_query_helper_and_register_as_adapter_dependency" }
+    if ($RouteType -eq "provider_pull_worker") { return "already_replaced_by_provider_snapshot_spine_or_compare_for_gap" }
+    if ($RouteType -eq "local_grinder_worker") { return "fold_into_row_resilient_disposition_grinder_contract" }
 
     return "manual_review"
 }
 
-function Add-RegistryRow {
-    param(
-        [System.Collections.Generic.List[object]]$Rows,
-        [string]$SourceLaneName,
-        [object]$Parent,
-        [object]$Child,
-        [bool]$IsSubfile
-    )
+function New-RegistryRow {
+    param([string]$SourceLaneName, [object]$Parent, [object]$Child, [bool]$IsSubfile)
 
-    $lane = if ($IsSubfile) { Get-TextValue -Object $Parent -Name "lane" } else { Get-TextValue -Object $Parent -Name "lane" }
-    if ([string]::IsNullOrWhiteSpace($lane)) {
-        $lane = $SourceLaneName
-    }
-
+    $lane = Get-TextValue -Object $Parent -Name "lane" -Default $SourceLaneName
     $stepOrder = Get-TextValue -Object $Parent -Name "step_order"
     $subOrder = if ($IsSubfile) { Get-TextValue -Object $Child -Name "sub_order" } else { "" }
 
@@ -309,6 +203,7 @@ function Add-RegistryRow {
     $absolutePath = if ($IsSubfile) { Get-TextValue -Object $Child -Name "current_absolute_path" } else { Get-TextValue -Object $Parent -Name "current_absolute_path" }
     $role = if ($IsSubfile) { Get-TextValue -Object $Child -Name "role" } else { Get-TextValue -Object $Parent -Name "role" }
     $purpose = if ($IsSubfile) { Get-TextValue -Object $Child -Name "purpose" } else { Get-TextValue -Object $Parent -Name "purpose" }
+
     $executionType = Get-TextValue -Object $Parent -Name "execution_type"
     $cleanRepoTarget = Get-TextValue -Object $Parent -Name "clean_repo_target"
     $migrationStatus = Get-TextValue -Object $Parent -Name "migration_status"
@@ -321,33 +216,20 @@ function Add-RegistryRow {
     $risk = Get-RiskLevel -RouteType $routeType -Operation $operation -SecretRisk $secretRisk -ContractGap $contractGap -Path $absolutePath
     $recommended = Get-RecommendedAction -RouteType $routeType -Operation $operation -MediaType $mediaType -MigrationStatus $migrationStatus -CleanRepoTarget $cleanRepoTarget
 
-    $applyCapable = $false
-    $dryRunCapable = $false
+    $applyCapable = ($operation -eq "import" -or $routeType -eq "powershell_import_wrapper")
+    $dryRunCapable = ($recommended -match "delta_import|enqueue")
 
-    if ($operation -eq "import" -or $routeType -eq "powershell_import_wrapper") {
-        $applyCapable = $true
-        $dryRunCapable = $false
-    }
-
-    if ($recommended -match "delta_import|enqueue") {
-        $dryRunCapable = $true
-    }
-
-    $needsReview = $true
-    if ($routeType -eq "provider_pull_worker" -or $routeType -eq "trigger_or_orchestrator") {
-        $needsReview = $false
-    }
-
-    if ($operation -eq "import" -or $routeType -in @("php_endpoint_or_server_worker", "server_upload", "query_helper", "powershell_import_wrapper")) {
+    $needsReview = $false
+    if ($operation -eq "import" -or $routeType -in @("php_endpoint_or_server_worker", "server_upload", "query_helper", "powershell_import_wrapper", "unknown")) {
         $needsReview = $true
     }
 
     $routeKeyParts = @($lane, $operation, $mediaType, $stepOrder, $subOrder, $actualFile) |
         Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
 
-    $routeKey = ($routeKeyParts -join "|").ToLowerInvariant() -replace "[^a-z0-9_\|\.-]+", "_"
+    $routeKey = (($routeKeyParts -join "|").ToLowerInvariant() -replace "[^a-z0-9_\|\.-]+", "_")
 
-    $Rows.Add([pscustomobject][ordered]@{
+    return [pscustomobject][ordered]@{
         route_key = $routeKey
         source_lane_name = $SourceLaneName
         lane = $lane
@@ -373,7 +255,7 @@ function Add-RegistryRow {
         contract_gap = $contractGap
         secret_risk = $secretRisk
         recommended_next_action = $recommended
-    }) | Out-Null
+    }
 }
 
 try {
@@ -409,7 +291,7 @@ try {
     }
 
     $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
-    $rows = New-Object System.Collections.Generic.List[object]
+    $rows = @()
 
     foreach ($lanePropertyName in @("series_lane", "epg_lane", "provider_pull_spine")) {
         $laneProperty = $manifest.PSObject.Properties |
@@ -421,7 +303,7 @@ try {
         }
 
         foreach ($entry in @($laneProperty.Value)) {
-            Add-RegistryRow -Rows $rows -SourceLaneName $lanePropertyName -Parent $entry -Child $null -IsSubfile $false
+            $rows += New-RegistryRow -SourceLaneName $lanePropertyName -Parent $entry -Child $null -IsSubfile $false
 
             $subfilesProperty = $entry.PSObject.Properties |
                 Where-Object { $_.Name -ieq "subfiles" } |
@@ -429,7 +311,7 @@ try {
 
             if ($null -ne $subfilesProperty -and $null -ne $subfilesProperty.Value) {
                 foreach ($subfile in @($subfilesProperty.Value)) {
-                    Add-RegistryRow -Rows $rows -SourceLaneName $lanePropertyName -Parent $entry -Child $subfile -IsSubfile $true
+                    $rows += New-RegistryRow -SourceLaneName $lanePropertyName -Parent $entry -Child $subfile -IsSubfile $true
                 }
             }
         }
