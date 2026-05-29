@@ -398,6 +398,13 @@ try {
             RequiredKillSwitch = "ENABLE_PROVIDER_SNAPSHOT_SPINE_RUNNER"
         },
         @{
+            Name = "plan_provider_snapshot_import_preview"
+            Path = "tools\workers\plan_provider_snapshot_import_preview.ps1"
+            Recurring = $false
+            RequiredSignals = @("provider_snapshot_import_preview_completed")
+            RequiredKillSwitch = "ENABLE_PROVIDER_SNAPSHOT_IMPORT_PREVIEW"
+        },
+        @{
             Name = "check_grinder_disposition_contract"
             Path = "tools\workers\check_grinder_disposition_contract.ps1"
             Recurring = $false
@@ -673,6 +680,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
