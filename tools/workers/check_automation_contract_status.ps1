@@ -347,6 +347,13 @@ try {
             Recurring = $false
             RequiredSignals = @("provider_live_categories_snapshot_completed")
             RequiredKillSwitch = "ENABLE_PROVIDER_LIVE_CATEGORIES_SNAPSHOT"
+        },
+        @{
+            Name = "build_provider_vod_categories_snapshot"
+            Path = "tools\workers\build_provider_vod_categories_snapshot.ps1"
+            Recurring = $false
+            RequiredSignals = @("provider_vod_categories_snapshot_completed")
+            RequiredKillSwitch = "ENABLE_PROVIDER_VOD_CATEGORIES_SNAPSHOT"
         }
     )
 
@@ -617,6 +624,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
