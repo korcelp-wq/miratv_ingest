@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Apply VOD streams delta with strict bounded controls.
 
@@ -368,7 +368,14 @@ try {
                     -RequiredParameterNames $requiredParameters `
                     -Limit $Limit
 
-                if ([string]$adapterResult.disposition -eq "dry_run_preview") {
+                $adapterDisposition = [string]($adapterResult.PSObject.Properties | Where-Object { $_.Name -ieq "disposition" } | Select-Object -ExpandProperty Value -First 1)
+                $adapterMissingParameters = [string]($adapterResult.PSObject.Properties | Where-Object { $_.Name -ieq "missing_parameters" } | Select-Object -ExpandProperty Value -First 1)
+                $adapterStatus = [string]($adapterResult.PSObject.Properties | Where-Object { $_.Name -ieq "status" } | Select-Object -ExpandProperty Value -First 1)
+                $adapterDbReadsText = [string]($adapterResult.PSObject.Properties | Where-Object { $_.Name -ieq "db_reads" } | Select-Object -ExpandProperty Value -First 1)
+                $adapterDbWritesText = [string]($adapterResult.PSObject.Properties | Where-Object { $_.Name -ieq "db_writes" } | Select-Object -ExpandProperty Value -First 1)
+                $adapterProviderCallsText = [string]($adapterResult.PSObject.Properties | Where-Object { $_.Name -ieq "provider_calls" } | Select-Object -ExpandProperty Value -First 1)
+
+                if ($adapterDisposition -eq "dry_run_preview") {
                     $dryRunCount++
                 }
                 else {
@@ -377,13 +384,13 @@ try {
 
                 $adapterRows += [pscustomobject][ordered]@{
                     source_row_disposition = "planned_import"
-                    adapter_disposition = [string]$adapterResult.disposition
+                    adapter_disposition = $adapterDisposition
                     provider_stream_id = [string]$parameters.provider_stream_id
-                    missing_required_parameters = [string]$adapterResult.missing_parameters
-                    adapter_status = [string]$adapterResult.status
-                    db_reads = [bool]$adapterResult.db_reads
-                    db_writes = [bool]$adapterResult.db_writes
-                    provider_calls = [bool]$adapterResult.provider_calls
+                    missing_required_parameters = $adapterMissingParameters
+                    adapter_status = $adapterStatus
+                    db_reads = ($adapterDbReadsText -eq "True")
+                    db_writes = ($adapterDbWritesText -eq "True")
+                    provider_calls = ($adapterProviderCallsText -eq "True")
                 }
             }
 
