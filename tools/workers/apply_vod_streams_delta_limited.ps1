@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Apply VOD streams delta with strict bounded controls.
 
@@ -10,6 +10,14 @@
     - DB writes are disabled.
     - Provider calls are disabled.
     - Real apply is refused until a later promoted implementation.
+    - A real write request requires all of the following:
+        -Apply
+        -AllowDbWrite
+        ENABLE_VOD_STREAMS_DELTA_LIMITED_APPLY_WRITES=true
+        -WriteAuthorizationCode "APPLY_VOD_STREAMS_DELTA_LIMITED"
+    - Even when the write authorization gate passes, actual DB apply is still
+      blocked by real_db_apply_not_promoted until the adapter write path is
+      explicitly implemented.
     - The worker self-blocks unless the latest real selector says:
         candidate_found=True
         selected_lane=vod_streams
@@ -31,6 +39,8 @@ param(
     [string]$Environment = "dev",
     [int]$Limit = 25,
     [switch]$Apply,
+    [switch]$AllowDbWrite,
+    [string]$WriteAuthorizationCode = "",
     [switch]$Quiet
 )
 
@@ -42,6 +52,8 @@ $Component = "vod_streams_delta_limited_apply"
 $DatabaseTarget = "xpdgxfsp_content"
 $SourceName = "provider_snapshot_import_candidate_selector"
 $KillSwitchName = "ENABLE_VOD_STREAMS_DELTA_LIMITED_APPLY"
+$WriteKillSwitchName = "ENABLE_VOD_STREAMS_DELTA_LIMITED_APPLY_WRITES"
+$ExpectedWriteAuthorizationCode = "APPLY_VOD_STREAMS_DELTA_LIMITED"
 
 $CompletedSignal = "vod_streams_delta_limited_apply_completed"
 $DispositionSignal = "vod_streams_delta_limited_apply_disposition"
@@ -113,6 +125,44 @@ function Test-WorkerKillSwitch {
 
     $normalized = $raw.Trim().ToLowerInvariant()
     return ($normalized -notin @("0", "false", "no", "off", "disabled"))
+}
+
+
+function Test-WriteAuthorizationGate {
+    param(
+        [bool]$ApplyRequested,
+        [bool]$AllowDbWriteRequested,
+        [string]$ProvidedCode
+    )
+
+    $rawWriteSwitch = [Environment]::GetEnvironmentVariable($WriteKillSwitchName)
+    $envEnabled = $false
+    if (-not [string]::IsNullOrWhiteSpace($rawWriteSwitch)) {
+        $normalized = $rawWriteSwitch.Trim().ToLowerInvariant()
+        $envEnabled = ($normalized -in @("1", "true", "yes", "on", "enabled"))
+    }
+
+    $codeMatches = (-not [string]::IsNullOrWhiteSpace($ProvidedCode) -and $ProvidedCode -eq $ExpectedWriteAuthorizationCode)
+
+    $reasons = @()
+    if (-not $ApplyRequested) { $reasons += "apply_switch_not_passed" }
+    if (-not $AllowDbWriteRequested) { $reasons += "allow_db_write_not_passed" }
+    if (-not $envEnabled) { $reasons += "write_kill_switch_not_enabled" }
+    if (-not $codeMatches) { $reasons += "write_authorization_code_invalid_or_missing" }
+
+    $authorized = ($ApplyRequested -and $AllowDbWriteRequested -and $envEnabled -and $codeMatches)
+
+    return [pscustomobject][ordered]@{
+        authorized = $authorized
+        apply_requested = $ApplyRequested
+        allow_db_write_requested = $AllowDbWriteRequested
+        write_kill_switch_name = $WriteKillSwitchName
+        write_kill_switch_enabled = $envEnabled
+        write_authorization_code_present = (-not [string]::IsNullOrWhiteSpace($ProvidedCode))
+        write_authorization_code_matches = $codeMatches
+        required_authorization_code = $ExpectedWriteAuthorizationCode
+        block_reasons = $reasons
+    }
 }
 
 function Get-LatestFile {
@@ -251,10 +301,20 @@ try {
     if ($Limit -gt 100) { $Limit = 100 }
 
     $dryRun = -not [bool]$Apply
+    $writeAuthorization = Test-WriteAuthorizationGate `
+        -ApplyRequested ([bool]$Apply) `
+        -AllowDbWriteRequested ([bool]$AllowDbWrite) `
+        -ProvidedCode $WriteAuthorizationCode
 
     Write-LocalJsonLog -EventName "job_started" -Status "running" -Data ([ordered]@{
         dry_run = $dryRun
         apply_requested = [bool]$Apply
+        allow_db_write = [bool]$AllowDbWrite
+        write_authorization_gate_passed = [bool]$writeAuthorization.authorized
+        write_kill_switch_name = $WriteKillSwitchName
+        write_kill_switch_enabled = [bool]$writeAuthorization.write_kill_switch_enabled
+        write_authorization_code_present = [bool]$writeAuthorization.write_authorization_code_present
+        write_authorization_code_matches = [bool]$writeAuthorization.write_authorization_code_matches
         limit = $Limit
         provider_calls = $false
         db_writes = $false
@@ -268,6 +328,13 @@ try {
             status = "disabled"
             disposition = "disabled_by_kill_switch"
             dry_run = $dryRun
+            apply_requested = [bool]$Apply
+            allow_db_write = [bool]$AllowDbWrite
+            write_authorization_gate_passed = [bool]$writeAuthorization.authorized
+            write_kill_switch_name = $WriteKillSwitchName
+            write_kill_switch_enabled = [bool]$writeAuthorization.write_kill_switch_enabled
+            write_authorization_code_present = [bool]$writeAuthorization.write_authorization_code_present
+            write_authorization_code_matches = [bool]$writeAuthorization.write_authorization_code_matches
             db_writes = $false
             provider_calls = $false
             run_id = $RunId
@@ -320,8 +387,16 @@ try {
 
     if (@($blockReasons).Count -eq 0) {
         if ($Apply) {
-            $disposition = "blocked_apply_not_implemented_yet"
-            $blockReasons += "real_db_apply_not_promoted"
+            if (-not $writeAuthorization.authorized) {
+                $disposition = "blocked_apply_write_authorization_missing"
+                foreach ($reason in @($writeAuthorization.block_reasons)) {
+                    $blockReasons += $reason
+                }
+            }
+            else {
+                $disposition = "blocked_apply_not_implemented_yet"
+                $blockReasons += "real_db_apply_not_promoted"
+            }
         }
         else {
             Import-Module $AdapterModulePath -Force
@@ -430,6 +505,13 @@ try {
         disposition = $disposition
         dry_run = $dryRun
         apply_requested = [bool]$Apply
+        allow_db_write = [bool]$AllowDbWrite
+        write_authorization_gate_passed = [bool]$writeAuthorization.authorized
+        write_kill_switch_name = $WriteKillSwitchName
+        write_kill_switch_enabled = [bool]$writeAuthorization.write_kill_switch_enabled
+        write_authorization_code_present = [bool]$writeAuthorization.write_authorization_code_present
+        write_authorization_code_matches = [bool]$writeAuthorization.write_authorization_code_matches
+        write_authorization_required_code = $ExpectedWriteAuthorizationCode
         db_writes = $dbWrites
         provider_calls = $false
         worker_name = $WorkerName
@@ -467,7 +549,7 @@ try {
     Write-LocalJsonLog -EventName "job_completed" -Status $status -Data $summary
 
     if (-not $Quiet) {
-        Write-Output "OK: VOD streams limited apply gate evaluated. status=$status disposition=$disposition dry_run=$dryRun adapter_dry_run=$dryRunCount rejected=$rejectedCount would_write=$wouldWriteCount actual_write=$actualWriteCount db_writes=$dbWrites provider_calls=False run_id=$RunId"
+        Write-Output "OK: VOD streams limited apply gate evaluated. status=$status disposition=$disposition dry_run=$dryRun apply_requested=$([bool]$Apply) allow_db_write=$([bool]$AllowDbWrite) write_authorized=$([bool]$writeAuthorization.authorized) adapter_dry_run=$dryRunCount rejected=$rejectedCount would_write=$wouldWriteCount actual_write=$actualWriteCount db_writes=$dbWrites provider_calls=False run_id=$RunId"
         Write-Output "FILES: report_csv=$reportCsv report_json=$reportJson summary_json=$summaryJson"
         Import-Csv $reportCsv | Format-Table -AutoSize
     }
