@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Run governed provider snapshot refresh and import preflight gate.
 
@@ -216,11 +216,11 @@ try {
         }
     )
 
-    $results = New-Object System.Collections.Generic.List[object]
+    $results = @()
 
     foreach ($step in $steps) {
         $result = Invoke-GateStep -Order $step.Order -Name $step.Name -RelativePath $step.Path -ExtraArgs $step.ExtraArgs
-        $results.Add($result) | Out-Null
+        $results += $result
 
         Write-LocalJsonLog -EventName "step_completed" -Status $result.status -Data $result
         Emit-LocalHeartbeat -Status $result.status
