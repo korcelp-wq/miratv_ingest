@@ -3,19 +3,21 @@
   Apply VOD streams delta with strict bounded controls.
 
 .DESCRIPTION
-  Dry-run-first apply worker skeleton for VOD streams.
+  Governed VOD streams limited apply worker.
 
-  This worker is intentionally conservative:
+  Current behavior:
     - Default is dry-run.
-    - DB writes are disabled unless -Apply is explicitly passed.
-    - Even with -Apply, the worker refuses to proceed unless the latest real selector
-      says candidate_found=True and selected_lane=vod_streams.
+    - DB writes are disabled.
+    - Provider calls are disabled.
+    - Real apply is refused until a later promoted implementation.
+    - The worker self-blocks unless the latest real selector says:
+        candidate_found=True
+        selected_lane=vod_streams
+        next_worker=apply_vod_streams_delta_limited.ps1
     - Synthetic simulator output is never accepted as apply authorization.
+    - When a real candidate exists, this worker routes candidate rows through
+      tools/common/MiraDbSafeAdapter.psm1 in dry-run mode only.
     - Row-level disposition discipline is enforced.
-    - This version does not call providers.
-    - This version does not import through the legacy unbounded import_vod_streams.ps1.
-
-  Today, with the current real selector state of noop_ready, this worker should self-block.
 
 .CONTRACT-MARKERS
   Write-JobLog
@@ -51,6 +53,7 @@ $RunId = "$WorkerName-$((Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssff
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $OutputRoot = Join-Path $RepoRoot "runtime\reports\vod_streams_delta_limited_apply"
 $LogRoot = Join-Path $RepoRoot "runtime\logs\vod_streams_delta_limited_apply"
+$AdapterModulePath = Join-Path $RepoRoot "tools\common\MiraDbSafeAdapter.psm1"
 
 New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $LogRoot | Out-Null
@@ -171,25 +174,75 @@ function Get-IntValue {
     return $Default
 }
 
-function Get-LatestRealSelectorSummary {
-    $folder = Join-Path $RepoRoot "runtime\reports\provider_snapshot_import_candidate_selector"
-    $latest = Get-LatestFile -Folder $folder -Filter "provider_snapshot_import_candidate_selection_summary_*.json"
+function Get-RowValue {
+    param([object]$Row, [string[]]$Names, [string]$Default = "")
 
-    if ($null -eq $latest) {
-        return $null
+    if ($null -eq $Row) { return $Default }
+
+    foreach ($name in $Names) {
+        $property = $Row.PSObject.Properties |
+            Where-Object { $_.Name -ieq $name } |
+            Select-Object -First 1
+
+        if ($null -ne $property -and $null -ne $property.Value) {
+            $value = [string]$property.Value
+            if (-not [string]::IsNullOrWhiteSpace($value)) {
+                return $value.Trim()
+            }
+        }
     }
 
+    return $Default
+}
+
+function New-CleanTitle {
+    param([string]$Title)
+
+    if ([string]::IsNullOrWhiteSpace($Title)) { return "" }
+
+    $clean = $Title.Trim()
+    $clean = $clean -replace '^\s*[A-Z]{2}\|\s*', ''
+    $clean = $clean -replace '\s+', ' '
+    return $clean.Trim()
+}
+
+function Convert-ToAdapterParameters {
+    param([object]$Row)
+
+    $titleRaw = Get-RowValue -Row $Row -Names @("title_raw", "name", "title", "stream_display_name")
+    $titleClean = Get-RowValue -Row $Row -Names @("title_clean", "clean_search_name") -Default (New-CleanTitle -Title $titleRaw)
+
+    return @{
+        mac_user_id = Get-RowValue -Row $Row -Names @("mac_user_id") -Default "6"
+        provider_label = Get-RowValue -Row $Row -Names @("provider_label", "provider") -Default "unknown"
+        provider_stream_id = Get-RowValue -Row $Row -Names @("provider_stream_id", "stream_id", "id")
+        provider_category_id = Get-RowValue -Row $Row -Names @("provider_category_id", "category_id")
+        title_raw = $titleRaw
+        title_clean = $titleClean
+        container_extension = Get-RowValue -Row $Row -Names @("container_extension", "container", "extension")
+        stream_icon = Get-RowValue -Row $Row -Names @("stream_icon", "movie_image", "cover", "icon")
+        added = Get-RowValue -Row $Row -Names @("added", "added_at")
+        rating = Get-RowValue -Row $Row -Names @("rating", "rating_5based")
+        tmdb_id = Get-RowValue -Row $Row -Names @("tmdb_id", "tmdb")
+        year = Get-RowValue -Row $Row -Names @("year", "release_year")
+    }
+}
+
+function Get-LatestRealSelectorSummary {
+    $latest = Get-LatestFile -Folder (Join-Path $RepoRoot "runtime\reports\provider_snapshot_import_candidate_selector") -Filter "provider_snapshot_import_candidate_selection_summary_*.json"
+    if ($null -eq $latest) { return $null }
     return Read-JsonFile -Path $latest.FullName
 }
 
 function Get-LatestVodPreviewSummary {
-    $folder = Join-Path $RepoRoot "runtime\reports\vod_streams_delta_import_preview"
-    $latest = Get-LatestFile -Folder $folder -Filter "vod_streams_delta_import_preview_summary_*.json"
+    $latest = Get-LatestFile -Folder (Join-Path $RepoRoot "runtime\reports\vod_streams_delta_import_preview") -Filter "vod_streams_delta_import_preview_summary_*.json"
+    if ($null -eq $latest) { return $null }
+    return Read-JsonFile -Path $latest.FullName
+}
 
-    if ($null -eq $latest) {
-        return $null
-    }
-
+function Get-LatestSqlContractSummary {
+    $latest = Get-LatestFile -Folder (Join-Path $RepoRoot "runtime\reports\vod_streams_apply_sql_contract") -Filter "vod_streams_apply_sql_contract_summary_*.json"
+    if ($null -eq $latest) { return $null }
     return Read-JsonFile -Path $latest.FullName
 }
 
@@ -204,6 +257,8 @@ try {
         apply_requested = [bool]$Apply
         limit = $Limit
         provider_calls = $false
+        db_writes = $false
+        adapter_module_path = $AdapterModulePath
     })
 
     Emit-LocalHeartbeat -Status "running"
@@ -227,6 +282,7 @@ try {
 
     $selector = Get-LatestRealSelectorSummary
     $vodPreview = Get-LatestVodPreviewSummary
+    $sqlContract = Get-LatestSqlContractSummary
 
     $candidateFound = Get-Bool -Object $selector -Name "candidate_found" -Default $false
     $selectedLane = Get-Text -Object $selector -Name "selected_lane" -Default "none"
@@ -239,84 +295,128 @@ try {
     $skippedProviderNoiseCount = Get-IntValue -Object $vodPreview -Name "skipped_provider_noise_count" -Default 0
     $vodPreviewOutputCsv = Get-Text -Object $vodPreview -Name "output_csv" -Default ""
 
+    $sqlTemplateFile = Get-Text -Object $sqlContract -Name "sql_template_file" -Default ""
+    $parameterCsv = Get-Text -Object $sqlContract -Name "parameter_csv" -Default ""
+
     $blockReasons = @()
     $disposition = "blocked_no_real_candidate"
     $wouldWriteCount = 0
     $actualWriteCount = 0
+    $dryRunCount = 0
+    $rejectedCount = 0
     $dbWrites = $false
+    $adapterRows = @()
 
-    if ($null -eq $selector) {
-        $blockReasons += "real_selector_summary_missing"
-    }
-
-    if (-not $candidateFound) {
-        $blockReasons += "real_selector_candidate_found_false"
-    }
-
-    if ($selectedLane -ne "vod_streams") {
-        $blockReasons += "real_selector_selected_lane_not_vod_streams"
-    }
-
-    if ($selectorNextWorker -ne "apply_vod_streams_delta_limited.ps1") {
-        $blockReasons += "real_selector_next_worker_not_this_worker"
-    }
-
-    if ($plannedImportCount -le 0) {
-        $blockReasons += "vod_preview_planned_import_count_zero"
-    }
-
-    if ($manualReviewCount -gt 0) {
-        $blockReasons += "vod_preview_manual_review_count_gt_zero"
-    }
-
-    if ([string]::IsNullOrWhiteSpace($vodPreviewOutputCsv) -or -not (Test-Path -LiteralPath $vodPreviewOutputCsv)) {
-        $blockReasons += "vod_preview_output_csv_missing"
-    }
+    if ($null -eq $selector) { $blockReasons += "real_selector_summary_missing" }
+    if (-not $candidateFound) { $blockReasons += "real_selector_candidate_found_false" }
+    if ($selectedLane -ne "vod_streams") { $blockReasons += "real_selector_selected_lane_not_vod_streams" }
+    if ($selectorNextWorker -ne "apply_vod_streams_delta_limited.ps1") { $blockReasons += "real_selector_next_worker_not_this_worker" }
+    if ($plannedImportCount -le 0) { $blockReasons += "vod_preview_planned_import_count_zero" }
+    if ($manualReviewCount -gt 0) { $blockReasons += "vod_preview_manual_review_count_gt_zero" }
+    if ([string]::IsNullOrWhiteSpace($vodPreviewOutputCsv) -or -not (Test-Path -LiteralPath $vodPreviewOutputCsv)) { $blockReasons += "vod_preview_output_csv_missing" }
+    if ([string]::IsNullOrWhiteSpace($sqlTemplateFile) -or -not (Test-Path -LiteralPath $sqlTemplateFile)) { $blockReasons += "sql_template_file_missing" }
+    if ([string]::IsNullOrWhiteSpace($parameterCsv) -or -not (Test-Path -LiteralPath $parameterCsv)) { $blockReasons += "parameter_csv_missing" }
+    if (-not (Test-Path -LiteralPath $AdapterModulePath)) { $blockReasons += "safe_adapter_module_missing" }
 
     if (@($blockReasons).Count -eq 0) {
-        $disposition = "dry_run_would_apply"
-        $wouldWriteCount = [Math]::Min($Limit, $plannedImportCount)
-
         if ($Apply) {
             $disposition = "blocked_apply_not_implemented_yet"
-            $blockReasons += "db_apply_step_not_implemented_in_skeleton"
+            $blockReasons += "real_db_apply_not_promoted"
+        }
+        else {
+            Import-Module $AdapterModulePath -Force
+
+            $sqlTemplate = Get-Content -LiteralPath $sqlTemplateFile -Raw
+            $parameterRows = @(Import-Csv -LiteralPath $parameterCsv)
+            $requiredParameters = @(
+                $parameterRows |
+                    Where-Object { ([string]$_.required).Trim().ToLowerInvariant() -eq "true" } |
+                    ForEach-Object { [string]$_.parameter_name }
+            )
+
+            $candidateRows = @(Import-Csv -LiteralPath $vodPreviewOutputCsv | Select-Object -First $Limit)
+
+            foreach ($row in $candidateRows) {
+                $parameters = Convert-ToAdapterParameters -Row $row
+
+                $missingRequired = @()
+                foreach ($requiredName in $requiredParameters) {
+                    if (-not $parameters.ContainsKey($requiredName) -or [string]::IsNullOrWhiteSpace([string]$parameters[$requiredName])) {
+                        $missingRequired += $requiredName
+                    }
+                }
+
+                if (@($missingRequired).Count -gt 0) {
+                    $rejectedCount++
+                    $adapterRows += [pscustomobject][ordered]@{
+                        source_row_disposition = "rejected_missing_required_parameters"
+                        adapter_disposition = "not_sent_to_adapter_missing_required_parameters"
+                        provider_stream_id = [string]$parameters.provider_stream_id
+                        missing_required_parameters = ($missingRequired -join "|")
+                        adapter_status = "skipped"
+                        db_reads = $false
+                        db_writes = $false
+                        provider_calls = $false
+                    }
+                    continue
+                }
+
+                $adapterResult = Invoke-MiraDbQuerySafe `
+                    -Mode "dry_run" `
+                    -Sql $sqlTemplate `
+                    -Parameters $parameters `
+                    -RequiredParameterNames $requiredParameters `
+                    -Limit $Limit
+
+                if ([string]$adapterResult.disposition -eq "dry_run_preview") {
+                    $dryRunCount++
+                }
+                else {
+                    $rejectedCount++
+                }
+
+                $adapterRows += [pscustomobject][ordered]@{
+                    source_row_disposition = "planned_import"
+                    adapter_disposition = [string]$adapterResult.disposition
+                    provider_stream_id = [string]$parameters.provider_stream_id
+                    missing_required_parameters = [string]$adapterResult.missing_parameters
+                    adapter_status = [string]$adapterResult.status
+                    db_reads = [bool]$adapterResult.db_reads
+                    db_writes = [bool]$adapterResult.db_writes
+                    provider_calls = [bool]$adapterResult.provider_calls
+                }
+            }
+
+            $disposition = "dry_run_adapter_preview_completed"
+            $wouldWriteCount = $dryRunCount
             $actualWriteCount = 0
             $dbWrites = $false
         }
     }
 
     $status = "pass"
-    if ($disposition -match "^blocked") {
-        $status = "warning"
-    }
+    if ($disposition -match "^blocked") { $status = "warning" }
 
     $timestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
     $reportCsv = Join-Path $OutputRoot "vod_streams_delta_limited_apply_$timestamp.csv"
     $reportJson = Join-Path $OutputRoot "vod_streams_delta_limited_apply_$timestamp.json"
     $summaryJson = Join-Path $OutputRoot "vod_streams_delta_limited_apply_summary_$timestamp.json"
 
-    $row = [pscustomobject][ordered]@{
-        disposition = $disposition
-        dry_run = $dryRun
-        apply_requested = [bool]$Apply
-        limit = $Limit
-        candidate_found = $candidateFound
-        selected_lane = $selectedLane
-        selector_disposition = $selectorDisposition
-        selector_next_worker = $selectorNextWorker
-        planned_import_count = $plannedImportCount
-        source_row_count = $sourceRowCount
-        manual_review_count = $manualReviewCount
-        skipped_provider_noise_count = $skippedProviderNoiseCount
-        would_write_count = $wouldWriteCount
-        actual_write_count = $actualWriteCount
-        db_writes = $dbWrites
-        provider_calls = $false
-        block_reasons = ($blockReasons -join "|")
+    if (@($adapterRows).Count -eq 0) {
+        $adapterRows += [pscustomobject][ordered]@{
+            source_row_disposition = "not_evaluated"
+            adapter_disposition = $disposition
+            provider_stream_id = ""
+            missing_required_parameters = ""
+            adapter_status = $status
+            db_reads = $false
+            db_writes = $false
+            provider_calls = $false
+        }
     }
 
-    $row | Export-Csv -Path $reportCsv -NoTypeInformation
-    $row | ConvertTo-Json -Depth 20 | Set-Content -Path $reportJson -Encoding UTF8
+    $adapterRows | Export-Csv -Path $reportCsv -NoTypeInformation
+    $adapterRows | ConvertTo-Json -Depth 20 | Set-Content -Path $reportJson -Encoding UTF8
 
     $summary = [ordered]@{
         status = $status
@@ -335,9 +435,14 @@ try {
         source_row_count = $sourceRowCount
         manual_review_count = $manualReviewCount
         skipped_provider_noise_count = $skippedProviderNoiseCount
+        dry_run_adapter_count = $dryRunCount
+        rejected_count = $rejectedCount
         would_write_count = $wouldWriteCount
         actual_write_count = $actualWriteCount
         block_reasons = $blockReasons
+        adapter_module_path = $AdapterModulePath
+        sql_template_file = $sqlTemplateFile
+        parameter_csv = $parameterCsv
         report_csv = $reportCsv
         report_json = $reportJson
         summary_json = $summaryJson
@@ -355,9 +460,9 @@ try {
     Write-LocalJsonLog -EventName "job_completed" -Status $status -Data $summary
 
     if (-not $Quiet) {
-        Write-Output "OK: VOD streams limited apply gate evaluated. status=$status disposition=$disposition dry_run=$dryRun would_write=$wouldWriteCount actual_write=$actualWriteCount db_writes=$dbWrites provider_calls=False run_id=$RunId"
+        Write-Output "OK: VOD streams limited apply gate evaluated. status=$status disposition=$disposition dry_run=$dryRun adapter_dry_run=$dryRunCount rejected=$rejectedCount would_write=$wouldWriteCount actual_write=$actualWriteCount db_writes=$dbWrites provider_calls=False run_id=$RunId"
         Write-Output "FILES: report_csv=$reportCsv report_json=$reportJson summary_json=$summaryJson"
-        Import-Csv $reportCsv | Format-List
+        Import-Csv $reportCsv | Format-Table -AutoSize
     }
 
     exit 0
