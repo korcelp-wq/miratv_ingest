@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Plan fix for VOD delta preview item-source routing.
 
@@ -269,9 +269,9 @@ try {
 
     $itemRowsAvailable = (@($snapshotItems).Count -gt 0)
 
-    $sampleRows = @()
+    $sampleOutputRows = @()
     foreach ($item in ($snapshotItems | Select-Object -First $SampleRows)) {
-        $sampleRows += [pscustomobject][ordered]@{
+        $sampleOutputRows += [pscustomobject][ordered]@{
             provider_stream_id = Get-Field -Row $item -Names @("provider_stream_id", "stream_id", "id")
             provider_category_id = Get-Field -Row $item -Names @("provider_category_id", "category_id")
             title = Get-Field -Row $item -Names @("title", "name", "title_raw", "stream_display_name")
@@ -388,7 +388,7 @@ try {
     $planTxt = Join-Path $OutputRoot "vod_delta_preview_item_source_fix_plan_$timestamp.txt"
     $summaryJson = Join-Path $OutputRoot "vod_delta_preview_item_source_fix_summary_$timestamp.json"
 
-    $sampleRows | Export-Csv -Path $sampleCsv -NoTypeInformation
+    $sampleOutputRows | Export-Csv -Path $sampleCsv -NoTypeInformation
     $fieldAvailabilityRows | Export-Csv -Path $fieldCsv -NoTypeInformation
     $sourceInspectionRows | Export-Csv -Path $sourceInspectionCsv -NoTypeInformation
 
@@ -486,7 +486,7 @@ Blockers:
         "`nFIELD AVAILABILITY:"
         $fieldAvailabilityRows | Format-Table -AutoSize
         "`nSAMPLE ITEMS:"
-        $sampleRows | Format-Table -AutoSize
+        $sampleOutputRows | Format-Table -AutoSize
         "`nSOURCE INSPECTION:"
         $sourceInspectionRows | Select-Object -First 50 | Format-Table -AutoSize
     }
@@ -513,3 +513,4 @@ catch {
     Write-Error "FAILED: VOD delta preview item-source fix planner failed. $message run_id=$RunId"
     exit 1
 }
+
