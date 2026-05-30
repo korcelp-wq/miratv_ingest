@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Run the governed provider snapshot spine for one MiraTV account.
 

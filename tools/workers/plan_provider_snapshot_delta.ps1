@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Plan provider snapshot deltas across governed snapshot workers.
 

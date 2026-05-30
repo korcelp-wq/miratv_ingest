@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Run governed provider snapshot refresh and import preflight gate.
 

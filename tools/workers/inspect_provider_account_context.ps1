@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Inspect current provider account context for one MiraTV app account.
 

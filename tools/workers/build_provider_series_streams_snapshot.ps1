@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Build a governed Series streams provider snapshot for one MiraTV account.
 

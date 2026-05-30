@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Build a governed VOD streams provider snapshot for one MiraTV account.
 
