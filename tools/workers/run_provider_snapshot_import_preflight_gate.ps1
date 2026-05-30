@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Run the provider snapshot import preflight gate.
 
@@ -201,11 +201,11 @@ try {
         [pscustomobject]@{ Order = 5; Name = "plan_provider_snapshot_import_execution"; Path = "tools\workers\plan_provider_snapshot_import_execution.ps1" }
     )
 
-    $results = New-Object System.Collections.Generic.List[object]
+    $results = @()
 
     foreach ($step in $steps) {
         $result = Invoke-GateStep -Order $step.Order -Name $step.Name -RelativePath $step.Path
-        $results.Add($result) | Out-Null
+        $results += $result
 
         Write-LocalJsonLog -EventName "step_completed" -Status $result.status -Data $result
         Emit-LocalHeartbeat -Status $result.status
