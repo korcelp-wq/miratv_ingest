@@ -291,6 +291,30 @@ function Resolve-LineageFromLatestDryRun {
     }
 }
 
+function Get-ProviderLabelFromSnapshotPath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+
+    $normalized = $Path -replace '/', '\'
+    $parts = @($normalized -split '\\' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+
+    for ($i = 0; $i -lt $parts.Count; $i++) {
+        if ($parts[$i] -eq "vod_streams" -and ($i + 2) -lt $parts.Count) {
+            $macPart = [string]$parts[$i + 1]
+            $providerPart = [string]$parts[$i + 2]
+
+            if ($macPart -match '^mac_\d+$' -and -not [string]::IsNullOrWhiteSpace($providerPart)) {
+                return $providerPart
+            }
+        }
+    }
+
+    return ""
+}
+
 function Convert-VodItemToPreviewRow {
     param(
         [object]$Item,
@@ -309,7 +333,13 @@ function Convert-VodItemToPreviewRow {
     $rating = Get-Field -Row $Item -Names @("rating", "rating_5based")
     $tmdbId = Get-Field -Row $Item -Names @("tmdb_id", "tmdb")
     $year = Get-Field -Row $Item -Names @("year", "release_year")
-    $providerLabel = Get-Field -Row $Item -Names @("provider_label", "provider") -Default "unknown"
+    $providerLabel = Get-Field -Row $Item -Names @("provider_label", "provider") -Default ""
+    if ([string]::IsNullOrWhiteSpace($providerLabel) -or $providerLabel.Trim().ToLowerInvariant() -eq "unknown") {
+        $providerLabel = Get-ProviderLabelFromSnapshotPath -Path $SourceSnapshot
+    }
+    if ([string]::IsNullOrWhiteSpace($providerLabel)) {
+        $providerLabel = "unknown"
+    }
     $macUserId = Get-Field -Row $Item -Names @("mac_user_id") -Default "6"
 
     $missing = @()
@@ -506,6 +536,7 @@ catch {
     Write-Error "FAILED: VOD streams delta item preview failed. $message run_id=$RunId"
     exit 1
 }
+
 
 
 
