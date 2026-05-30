@@ -276,7 +276,21 @@ try {
         $blockers += "db_schema_validation_not_executed"
     }
 
-    $blockers += "safe_adapter_schema_check_not_promoted"
+    $schemaLivePassedChecks = @()
+    if ($schemaLiveReadSummary -and $schemaLiveReadSummary.PSObject.Properties.Name -contains "passed_checks") {
+        $schemaLivePassedChecks = @($schemaLiveReadSummary.passed_checks | ForEach-Object { [string]$_ })
+    }
+
+    if (
+        $schemaLivePassedChecks -contains "safe_adapter_schema_check_validated" -and
+        $schemaLivePassedChecks -contains "safe_adapter_schema_check_read_only"
+    ) {
+        $passedChecks += "safe_adapter_schema_check_promoted"
+    }
+    else {
+        $blockers += "safe_adapter_schema_check_not_promoted"
+    }
+
     $blockers += "safe_adapter_apply_mode_not_implemented"
     $blockers += "no_real_db_write_authorization_gate_enabled"
 
@@ -378,4 +392,5 @@ catch {
     Write-Error "FAILED: VOD limited apply promotion readiness failed. $message run_id=$RunId"
     exit 1
 }
+
 
