@@ -261,7 +261,7 @@ VALUES (
     :title_raw,
     :title_clean,
     :stream_icon,
-    NULLIF(:added, ''),
+    FROM_UNIXTIME(NULLIF(:added, '')),
     NULLIF(:rating, ''),
     NULLIF(:year, ''),
     NOW()
@@ -429,5 +429,6 @@ catch {
     Write-Error "FAILED: VOD streams apply SQL contract planner failed. $message run_id=$RunId"
     exit 1
 }
+
 
 
