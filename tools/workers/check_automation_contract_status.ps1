@@ -643,6 +643,13 @@ try {
             RequiredKillSwitch = "ENABLE_QUERY_WRAPPER_CANONICAL_SOURCE_RESOLVER"
         },
         @{
+            Name = "audit_provider_snapshot_data_reality"
+            Path = "tools\workers\audit_provider_snapshot_data_reality.ps1"
+            Recurring = $false
+            RequiredSignals = @("provider_snapshot_data_reality_audit_completed")
+            RequiredKillSwitch = "ENABLE_PROVIDER_SNAPSHOT_DATA_REALITY_AUDIT"
+        },
+        @{
             Name = "check_grinder_disposition_contract"
             Path = "tools\workers\check_grinder_disposition_contract.ps1"
             Recurring = $false
@@ -918,6 +925,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
