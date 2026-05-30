@@ -223,7 +223,15 @@ try {
     if ($applySummaryFile) { $passedChecks += "apply_summary_present" } else { $blockers += "apply_summary_missing" }
     if (-not $applyDbWrites -and $applyActualWriteCount -eq 0) { $passedChecks += "apply_worker_no_db_writes" } else { $blockers += "apply_worker_wrote_db_unexpected" }
     if ($applyCandidateFound) { $passedChecks += "real_candidate_seen" } else { $blockers += "no_real_vod_candidate_yet" }
-    if ($applyDisposition -eq "dry_run_adapter_preview_completed") { $passedChecks += "apply_adapter_dry_run_path_exercised_by_real_candidate" } else { $blockers += "real_apply_adapter_path_not_exercised_current_selector_is_$applyDisposition" }
+    if ($applyDisposition -eq "dry_run_adapter_preview_completed") {
+        $passedChecks += "apply_adapter_dry_run_path_exercised_by_real_candidate"
+    }
+    elseif ($applyDisposition -eq "blocked_apply_write_authorization_missing" -and -not $applyDbWrites -and $applyActualWriteCount -eq 0) {
+        $passedChecks += "apply_write_authorization_gate_blocks_unapproved_apply"
+    }
+    else {
+        $blockers += "real_apply_adapter_path_not_exercised_current_selector_is_$applyDisposition"
+    }
 
     $decisionDisposition = Get-Text -Object $decisionSummary -Name "disposition" -Default "missing"
     $decisionDbWrites = Get-Bool -Object $decisionSummary -Name "db_writes" -Default $false
@@ -292,7 +300,12 @@ try {
     }
 
     $blockers += "safe_adapter_apply_mode_not_implemented"
-    $blockers += "no_real_db_write_authorization_gate_enabled"
+    if ($applyDisposition -eq "blocked_apply_write_authorization_missing" -and -not $applyDbWrites -and $applyActualWriteCount -eq 0) {
+        $passedChecks += "real_db_write_authorization_gate_enabled"
+    }
+    else {
+        $blockers += "no_real_db_write_authorization_gate_enabled"
+    }
 
     $applyReady = $false
     $disposition = "promotion_blocked"
@@ -392,5 +405,6 @@ catch {
     Write-Error "FAILED: VOD limited apply promotion readiness failed. $message run_id=$RunId"
     exit 1
 }
+
 
 
