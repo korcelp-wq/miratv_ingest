@@ -580,6 +580,13 @@ try {
             RequiredKillSwitch = "ENABLE_VOD_POWERSHELL_DB_ADAPTER_CONTRACT_PLANNER"
         },
         @{
+            Name = "test_mira_db_safe_adapter_fixture"
+            Path = "tools\workers\test_mira_db_safe_adapter_fixture.ps1"
+            Recurring = $false
+            RequiredSignals = @("mira_db_safe_adapter_fixture_test_completed")
+            RequiredKillSwitch = "ENABLE_MIRA_DB_SAFE_ADAPTER_FIXTURE_TEST"
+        },
+        @{
             Name = "check_grinder_disposition_contract"
             Path = "tools\workers\check_grinder_disposition_contract.ps1"
             Recurring = $false
@@ -855,6 +862,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
