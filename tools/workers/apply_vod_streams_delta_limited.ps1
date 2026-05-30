@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Apply VOD streams delta with strict bounded controls.
 
@@ -35,6 +35,7 @@
 param(
     [string]$Environment = "dev",
     [int]$Limit = 25,
+    [int]$Offset = 0,
     [switch]$Apply,
     [switch]$AllowDbWrite,
     [string]$WriteAuthorizationCode = "",
@@ -400,7 +401,7 @@ try {
                     ForEach-Object { [string]$_.parameter_name }
             )
 
-            $candidateRows = @(Import-Csv -LiteralPath $vodPreviewOutputCsv | Select-Object -First $Limit)
+            $candidateRows = @(Import-Csv -LiteralPath $vodPreviewOutputCsv | Select-Object -Skip $Offset -First $Limit)
 
             foreach ($row in $candidateRows) {
                 $parameters = Convert-ToAdapterParameters -Row $row
@@ -609,3 +610,6 @@ catch {
     Write-Error "FAILED: VOD streams limited apply gate failed. $message run_id=$RunId"
     exit 1
 }
+
+
+
