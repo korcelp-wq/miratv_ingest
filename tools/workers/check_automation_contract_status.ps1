@@ -587,6 +587,13 @@ try {
             RequiredKillSwitch = "ENABLE_MIRA_DB_SAFE_ADAPTER_FIXTURE_TEST"
         },
         @{
+            Name = "test_vod_apply_safe_adapter_integration_fixture"
+            Path = "tools\workers\test_vod_apply_safe_adapter_integration_fixture.ps1"
+            Recurring = $false
+            RequiredSignals = @("vod_apply_safe_adapter_integration_fixture_completed")
+            RequiredKillSwitch = "ENABLE_VOD_APPLY_SAFE_ADAPTER_INTEGRATION_FIXTURE_TEST"
+        },
+        @{
             Name = "check_grinder_disposition_contract"
             Path = "tools\workers\check_grinder_disposition_contract.ps1"
             Recurring = $false
@@ -862,6 +869,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
