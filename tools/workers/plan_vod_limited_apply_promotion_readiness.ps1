@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Plan VOD limited apply promotion readiness.
 
@@ -201,6 +201,7 @@ try {
     $adapterFixtureSummaryFile = Get-LatestFile -Folder (Join-Path $RepoRoot "runtime\reports\mira_db_safe_adapter_fixture") -Filter "mira_db_safe_adapter_fixture_summary_*.json"
     $adapterIntegrationSummaryFile = Get-LatestFile -Folder (Join-Path $RepoRoot "runtime\reports\vod_apply_safe_adapter_integration_fixture") -Filter "vod_apply_safe_adapter_integration_fixture_summary_*.json"
     $schemaSummaryFile = Get-LatestFile -Folder (Join-Path $RepoRoot "runtime\reports\vod_apply_db_schema_contract") -Filter "vod_apply_db_schema_contract_summary_*.json"
+    $schemaLiveReadSummaryFile = Get-LatestFile -Folder (Join-Path $RepoRoot "runtime\reports\vod_apply_db_schema_live_read") -Filter "vod_apply_db_schema_live_read_summary_*.json"
 
     $applySummary = Read-JsonFile -Path $(if ($applySummaryFile) { $applySummaryFile.FullName } else { "" })
     $decisionSummary = Read-JsonFile -Path $(if ($decisionSummaryFile) { $decisionSummaryFile.FullName } else { "" })
@@ -208,6 +209,7 @@ try {
     $adapterFixtureSummary = Read-JsonFile -Path $(if ($adapterFixtureSummaryFile) { $adapterFixtureSummaryFile.FullName } else { "" })
     $adapterIntegrationSummary = Read-JsonFile -Path $(if ($adapterIntegrationSummaryFile) { $adapterIntegrationSummaryFile.FullName } else { "" })
     $schemaSummary = Read-JsonFile -Path $(if ($schemaSummaryFile) { $schemaSummaryFile.FullName } else { "" })
+    $schemaLiveReadSummary = Read-JsonFile -Path $(if ($schemaLiveReadSummaryFile) { $schemaLiveReadSummaryFile.FullName } else { "" })
 
     $blockers = @()
     $passedChecks = @()
@@ -252,7 +254,28 @@ try {
     $schemaReadiness = Get-Text -Object $schemaSummary -Name "schema_readiness" -Default "missing"
     if ($schemaReadiness -eq "schema_contract_planned_db_validation_needed") { $passedChecks += "schema_contract_planned" } else { $blockers += "schema_contract_missing_or_unexpected" }
 
-    $blockers += "db_schema_validation_not_executed"
+    $schemaLiveDisposition = Get-Text -Object $schemaLiveReadSummary -Name "disposition" -Default "missing"
+    $schemaLiveValid = Get-Bool -Object $schemaLiveReadSummary -Name "schema_valid" -Default $false
+    $schemaLiveDbReads = Get-Bool -Object $schemaLiveReadSummary -Name "db_reads" -Default $false
+    $schemaLiveDbWrites = Get-Bool -Object $schemaLiveReadSummary -Name "db_writes" -Default $true
+    $schemaLiveProviderCalls = Get-Bool -Object $schemaLiveReadSummary -Name "provider_calls" -Default $true
+    $schemaLiveKeyFound = Get-Bool -Object $schemaLiveReadSummary -Name "key_found" -Default $false
+
+    if (
+        $schemaLiveReadSummaryFile -and
+        $schemaLiveDisposition -eq "schema_live_read_validated" -and
+        $schemaLiveValid -and
+        $schemaLiveDbReads -and
+        -not $schemaLiveDbWrites -and
+        -not $schemaLiveProviderCalls -and
+        $schemaLiveKeyFound
+    ) {
+        $passedChecks += "schema_live_read_validated"
+    }
+    else {
+        $blockers += "db_schema_validation_not_executed"
+    }
+
     $blockers += "safe_adapter_schema_check_not_promoted"
     $blockers += "safe_adapter_apply_mode_not_implemented"
     $blockers += "no_real_db_write_authorization_gate_enabled"
@@ -310,6 +333,7 @@ try {
         adapter_fixture_summary_json = $(if ($adapterFixtureSummaryFile) { $adapterFixtureSummaryFile.FullName } else { "" })
         adapter_integration_summary_json = $(if ($adapterIntegrationSummaryFile) { $adapterIntegrationSummaryFile.FullName } else { "" })
         schema_summary_json = $(if ($schemaSummaryFile) { $schemaSummaryFile.FullName } else { "" })
+        schema_live_read_summary_json = $(if ($schemaLiveReadSummaryFile) { $schemaLiveReadSummaryFile.FullName } else { "" })
         report_csv = $reportCsv
         report_json = $reportJson
         summary_json = $summaryJson
@@ -354,3 +378,4 @@ catch {
     Write-Error "FAILED: VOD limited apply promotion readiness failed. $message run_id=$RunId"
     exit 1
 }
+
