@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Safe database adapter for MiraTV governed import/apply gates.
 
@@ -10,12 +10,13 @@
     - Validate required parameters
     - Return dry-run preview result
     - Run explicit read-only schema checks through DbQuery.psm1 / dog_open_proc
-    - Refuse apply mode unless a future explicit write implementation is promoted
+    - Run explicit apply mode through dog_open_proc only when -AllowDbWrite is passed
 
   Safety model:
     - dry_run mode: no DB reads, no DB writes, no provider calls
     - schema_check mode: DB reads only when -AllowDbRead is explicitly passed
-    - apply mode: still blocked; no DB writes implemented here
+    - apply mode: DB write bridge only when -AllowDbWrite is explicitly passed
+    - provider_calls is always false in this adapter
 #>
 
 Set-StrictMode -Version Latest
@@ -110,6 +111,32 @@ function Get-MiraDbAdapterText {
     return [string]$property.Value
 }
 
+function Get-MiraDbAdapterInt {
+    param(
+        [object]$Object,
+        [string[]]$Names,
+        [int]$Default = 0
+    )
+
+    if ($null -eq $Object) { return $Default }
+    if ($null -eq $Names) { return $Default }
+
+    foreach ($name in $Names) {
+        $property = $Object.PSObject.Properties |
+            Where-Object { $_.Name -ieq $name } |
+            Select-Object -First 1
+
+        if ($null -ne $property -and $null -ne $property.Value) {
+            $parsed = 0
+            if ([int]::TryParse([string]$property.Value, [ref]$parsed)) {
+                return $parsed
+            }
+        }
+    }
+
+    return $Default
+}
+
 function Get-MiraDbSchemaKeyFound {
     param(
         [object[]]$IndexRows,
@@ -136,6 +163,11 @@ function Get-MiraDbSchemaKeyFound {
     return $false
 }
 
+function Get-MiraDbQueryModulePath {
+    $modulePath = Join-Path (Split-Path -Parent $PSScriptRoot) "common\DbQuery.psm1"
+    return $modulePath
+}
+
 function Invoke-MiraDbSchemaCheck {
     [CmdletBinding()]
     param(
@@ -145,7 +177,7 @@ function Invoke-MiraDbSchemaCheck {
         [string]$RequiredUniqueKey = "provider|provider_vod_id"
     )
 
-    $modulePath = Join-Path (Split-Path -Parent $PSScriptRoot) "common\DbQuery.psm1"
+    $modulePath = Get-MiraDbQueryModulePath
     if (-not (Test-Path -LiteralPath $modulePath)) {
         return [pscustomobject][ordered]@{
             status = "blocked"
@@ -212,6 +244,82 @@ function Invoke-MiraDbSchemaCheck {
         db_writes = $false
         provider_calls = $false
         rows_affected = 0
+    }
+}
+
+function Convert-MiraDbParametersToBridgeParams {
+    [CmdletBinding()]
+    param(
+        [hashtable]$Parameters
+    )
+
+    if ($null -eq $Parameters) {
+        return @{}
+    }
+
+    $ordered = [ordered]@{}
+    foreach ($key in ($Parameters.Keys | Sort-Object)) {
+        $ordered[[string]$key] = $Parameters[$key]
+    }
+
+    return [pscustomobject]$ordered
+}
+
+function Invoke-MiraDbApply {
+    [CmdletBinding()]
+    param(
+        [string]$DatabaseKey = "content",
+        [string]$Sql,
+        [hashtable]$Parameters = @{},
+        [int]$TimeoutSec = 60
+    )
+
+    $modulePath = Get-MiraDbQueryModulePath
+    if (-not (Test-Path -LiteralPath $modulePath)) {
+        return [pscustomobject][ordered]@{
+            status = "blocked"
+            disposition = "blocked_apply_db_query_module_missing"
+            mode = "apply"
+            rows_affected = 0
+            db_reads = $false
+            db_writes = $false
+            provider_calls = $false
+        }
+    }
+
+    Import-Module $modulePath -Force
+
+    $bridgeParams = Convert-MiraDbParametersToBridgeParams -Parameters $Parameters
+
+    $response = Invoke-DogOpenProc `
+        -DatabaseKey $DatabaseKey `
+        -Sql $Sql `
+        -Params @($bridgeParams) `
+        -TimeoutSec $TimeoutSec
+
+    $affected = Get-MiraDbAdapterInt `
+        -Object $response `
+        -Names @("affected", "affected_rows", "rows_affected", "row_count") `
+        -Default 0
+
+    $okText = Get-MiraDbAdapterText -Object $response -Name "ok" -Default "true"
+    $status = "pass"
+    $disposition = "apply_completed"
+
+    if ($okText.Trim().ToLowerInvariant() -eq "false") {
+        $status = "warning"
+        $disposition = "apply_bridge_returned_not_ok"
+    }
+
+    return [pscustomobject][ordered]@{
+        status = $status
+        disposition = $disposition
+        mode = "apply"
+        rows_affected = $affected
+        db_reads = $false
+        db_writes = $true
+        provider_calls = $false
+        raw_response = $response
     }
 }
 
@@ -348,16 +456,22 @@ function Invoke-MiraDbQuerySafe {
             }
         }
 
+        $applyResult = Invoke-MiraDbApply `
+            -DatabaseKey $DatabaseKey `
+            -Sql $Sql `
+            -Parameters $Parameters
+
         return [pscustomobject][ordered]@{
-            status = "blocked"
-            disposition = "blocked_apply_db_adapter_not_implemented"
+            status = $applyResult.status
+            disposition = $applyResult.disposition
             mode = $Mode
             sql_is_safe = $true
+            sql_violations = ""
             parameters_valid = $true
             missing_parameters = ""
-            rows_affected = 0
+            rows_affected = $applyResult.rows_affected
             db_reads = $false
-            db_writes = $false
+            db_writes = $applyResult.db_writes
             provider_calls = $false
         }
     }
@@ -379,4 +493,4 @@ function Invoke-MiraDbQuerySafe {
     }
 }
 
-Export-ModuleMember -Function Test-MiraDbSqlSafety, Test-MiraDbRequiredParameters, Invoke-MiraDbQuerySafe, Invoke-MiraDbSchemaCheck
+Export-ModuleMember -Function Test-MiraDbSqlSafety, Test-MiraDbRequiredParameters, Invoke-MiraDbQuerySafe, Invoke-MiraDbSchemaCheck, Invoke-MiraDbApply
