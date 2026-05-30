@@ -1,24 +1,21 @@
 ﻿<#
 .SYNOPSIS
-  Safe DB adapter skeleton for MiraTV governed workers.
+  Safe database adapter for MiraTV governed import/apply gates.
 
 .DESCRIPTION
-  Contract-first adapter skeleton.
+  This module is intentionally conservative.
 
-  This module intentionally supports dry-run behavior now and refuses real DB writes
-  until a later explicit implementation step promotes it.
-
-  Current supported behavior:
+  Supported behavior:
     - Validate unsafe SQL patterns
     - Validate required parameters
     - Return dry-run preview result
-    - Return schema-check-not-implemented result without connecting
-    - Refuse apply mode
+    - Run explicit read-only schema checks through DbQuery.psm1 / dog_open_proc
+    - Refuse apply mode unless a future explicit write implementation is promoted
 
-  No DB connections.
-  No DB reads.
-  No DB writes.
-  No provider calls.
+  Safety model:
+    - dry_run mode: no DB reads, no DB writes, no provider calls
+    - schema_check mode: DB reads only when -AllowDbRead is explicitly passed
+    - apply mode: still blocked; no DB writes implemented here
 #>
 
 Set-StrictMode -Version Latest
@@ -37,7 +34,10 @@ function Test-MiraDbSqlSafety {
         '\bALTER\b',
         '\bCREATE\b',
         '\bGRANT\b',
-        '\bREVOKE\b'
+        '\bREVOKE\b',
+        '\bLOAD_FILE\b',
+        '\bINTO\s+OUTFILE\b',
+        '\bINTO\s+DUMPFILE\b'
     )
 
     $violations = @()
@@ -66,15 +66,17 @@ function Test-MiraDbRequiredParameters {
         [string[]]$RequiredParameterNames
     )
 
+    if ($null -eq $Parameters) {
+        $Parameters = @{}
+    }
+
+    if ($null -eq $RequiredParameterNames) {
+        $RequiredParameterNames = @()
+    }
+
     $missing = @()
     foreach ($name in $RequiredParameterNames) {
         if (-not $Parameters.ContainsKey($name)) {
-            $missing += $name
-            continue
-        }
-
-        $value = $Parameters[$name]
-        if ($null -eq $value -or [string]::IsNullOrWhiteSpace([string]$value)) {
             $missing += $name
         }
     }
@@ -87,6 +89,129 @@ function Test-MiraDbRequiredParameters {
         db_reads = $false
         db_writes = $false
         provider_calls = $false
+    }
+}
+
+function Get-MiraDbAdapterText {
+    param(
+        [object]$Object,
+        [string]$Name,
+        [string]$Default = ""
+    )
+
+    if ($null -eq $Object) { return $Default }
+
+    $property = $Object.PSObject.Properties |
+        Where-Object { $_.Name -ieq $Name } |
+        Select-Object -First 1
+
+    if ($null -eq $property -or $null -eq $property.Value) { return $Default }
+
+    return [string]$property.Value
+}
+
+function Get-MiraDbSchemaKeyFound {
+    param(
+        [object[]]$IndexRows,
+        [string]$RequiredUniqueKey
+    )
+
+    if ($null -eq $IndexRows) { return $false }
+    if ([string]::IsNullOrWhiteSpace($RequiredUniqueKey)) { return $false }
+
+    $uniqueIndexGroups = @($IndexRows |
+        Where-Object { [string]$_.Non_unique -eq "0" } |
+        Group-Object -Property Key_name)
+
+    foreach ($group in $uniqueIndexGroups) {
+        $keyColumns = @($group.Group |
+            Sort-Object { [int]$_.Seq_in_index } |
+            ForEach-Object { [string]$_.Column_name })
+
+        if (($keyColumns -join "|") -eq $RequiredUniqueKey) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+function Invoke-MiraDbSchemaCheck {
+    [CmdletBinding()]
+    param(
+        [string]$DatabaseKey = "content",
+        [string]$TargetTable = "vod",
+        [string[]]$RequiredColumns = @("provider", "provider_vod_id", "category_id", "title", "updated_at"),
+        [string]$RequiredUniqueKey = "provider|provider_vod_id"
+    )
+
+    $modulePath = Join-Path (Split-Path -Parent $PSScriptRoot) "common\DbQuery.psm1"
+    if (-not (Test-Path -LiteralPath $modulePath)) {
+        return [pscustomobject][ordered]@{
+            status = "blocked"
+            disposition = "blocked_schema_check_db_query_module_missing"
+            mode = "schema_check"
+            schema_valid = $false
+            database_key = $DatabaseKey
+            target_table = $TargetTable
+            required_unique_key = $RequiredUniqueKey
+            required_columns = ($RequiredColumns -join "|")
+            missing_required_columns = ""
+            key_found = $false
+            db_reads = $false
+            db_writes = $false
+            provider_calls = $false
+            rows_affected = 0
+        }
+    }
+
+    Import-Module $modulePath -Force
+
+    $columnQuery = "SHOW COLUMNS FROM $TargetTable;"
+    $indexQuery = "SHOW INDEX FROM $TargetTable;"
+
+    $columnEnvelope = Invoke-ReadOnlyDbQuery `
+        -DatabaseKey $DatabaseKey `
+        -Sql $columnQuery
+
+    $indexEnvelope = Invoke-ReadOnlyDbQuery `
+        -DatabaseKey $DatabaseKey `
+        -Sql $indexQuery
+
+    $columnRows = @($columnEnvelope[0].rows)
+    $indexRows = @($indexEnvelope[0].rows)
+
+    $columnsFound = @($columnRows | ForEach-Object { [string]$_.Field })
+    $missingColumns = @($RequiredColumns | Where-Object { $_ -notin $columnsFound })
+    $keyFound = Get-MiraDbSchemaKeyFound -IndexRows $indexRows -RequiredUniqueKey $RequiredUniqueKey
+
+    $schemaValid = (@($missingColumns).Count -eq 0 -and $keyFound)
+
+    $disposition = "schema_check_validated"
+    $status = "pass"
+
+    if (-not $schemaValid) {
+        $disposition = "schema_check_completed_with_blocks"
+        $status = "warning"
+    }
+
+    return [pscustomobject][ordered]@{
+        status = $status
+        disposition = $disposition
+        mode = "schema_check"
+        schema_valid = $schemaValid
+        database_key = $DatabaseKey
+        target_table = $TargetTable
+        required_unique_key = $RequiredUniqueKey
+        required_columns = ($RequiredColumns -join "|")
+        missing_required_columns = ($missingColumns -join "|")
+        key_found = $keyFound
+        column_row_count = @($columnRows).Count
+        index_row_count = @($indexRows).Count
+        db_reads = $true
+        db_writes = $false
+        provider_calls = $false
+        rows_affected = 0
     }
 }
 
@@ -107,11 +232,24 @@ function Invoke-MiraDbQuerySafe {
 
         [switch]$AllowDbRead,
 
-        [switch]$AllowDbWrite
+        [switch]$AllowDbWrite,
+
+        [string]$DatabaseKey = "content",
+
+        [string]$TargetTable = "vod",
+
+        [string[]]$RequiredColumns = @("provider", "provider_vod_id", "category_id", "title", "updated_at"),
+
+        [string]$RequiredUniqueKey = "provider|provider_vod_id"
     )
 
-    if ($Limit -lt 1) { $Limit = 1 }
-    if ($Limit -gt 100) { $Limit = 100 }
+    if ($null -eq $Parameters) {
+        $Parameters = @{}
+    }
+
+    if ($null -eq $RequiredParameterNames) {
+        $RequiredParameterNames = @()
+    }
 
     $sqlSafety = Test-MiraDbSqlSafety -Sql $Sql
     $parameterCheck = Test-MiraDbRequiredParameters -Parameters $Parameters -RequiredParameterNames $RequiredParameterNames
@@ -156,6 +294,7 @@ function Invoke-MiraDbQuerySafe {
                 mode = $Mode
                 sql_is_safe = $true
                 parameters_valid = $true
+                missing_parameters = ""
                 rows_affected = 0
                 db_reads = $false
                 db_writes = $false
@@ -163,14 +302,31 @@ function Invoke-MiraDbQuerySafe {
             }
         }
 
+        $schemaResult = Invoke-MiraDbSchemaCheck `
+            -DatabaseKey $DatabaseKey `
+            -TargetTable $TargetTable `
+            -RequiredColumns $RequiredColumns `
+            -RequiredUniqueKey $RequiredUniqueKey
+
         return [pscustomobject][ordered]@{
-            status = "blocked"
-            disposition = "blocked_schema_check_db_adapter_not_implemented"
+            status = $schemaResult.status
+            disposition = $schemaResult.disposition
             mode = $Mode
             sql_is_safe = $true
+            sql_violations = ""
             parameters_valid = $true
+            missing_parameters = ""
+            schema_valid = $schemaResult.schema_valid
+            database_key = $schemaResult.database_key
+            target_table = $schemaResult.target_table
+            required_unique_key = $schemaResult.required_unique_key
+            required_columns = $schemaResult.required_columns
+            missing_required_columns = $schemaResult.missing_required_columns
+            key_found = $schemaResult.key_found
+            column_row_count = $schemaResult.column_row_count
+            index_row_count = $schemaResult.index_row_count
             rows_affected = 0
-            db_reads = $false
+            db_reads = $schemaResult.db_reads
             db_writes = $false
             provider_calls = $false
         }
@@ -184,6 +340,7 @@ function Invoke-MiraDbQuerySafe {
                 mode = $Mode
                 sql_is_safe = $true
                 parameters_valid = $true
+                missing_parameters = ""
                 rows_affected = 0
                 db_reads = $false
                 db_writes = $false
@@ -197,6 +354,7 @@ function Invoke-MiraDbQuerySafe {
             mode = $Mode
             sql_is_safe = $true
             parameters_valid = $true
+            missing_parameters = ""
             rows_affected = 0
             db_reads = $false
             db_writes = $false
@@ -209,7 +367,9 @@ function Invoke-MiraDbQuerySafe {
         disposition = "dry_run_preview"
         mode = $Mode
         sql_is_safe = $true
+        sql_violations = ""
         parameters_valid = $true
+        missing_parameters = ""
         supplied_parameter_count = @($Parameters.Keys).Count
         limit = $Limit
         rows_affected = 0
@@ -219,4 +379,4 @@ function Invoke-MiraDbQuerySafe {
     }
 }
 
-Export-ModuleMember -Function Test-MiraDbSqlSafety, Test-MiraDbRequiredParameters, Invoke-MiraDbQuerySafe
+Export-ModuleMember -Function Test-MiraDbSqlSafety, Test-MiraDbRequiredParameters, Invoke-MiraDbQuerySafe, Invoke-MiraDbSchemaCheck
