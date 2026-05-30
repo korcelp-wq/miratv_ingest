@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Safe DB adapter skeleton for MiraTV governed workers.
 
@@ -26,7 +26,7 @@ Set-StrictMode -Version Latest
 function Test-MiraDbSqlSafety {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)]
+        [Parameter()]
         [string]$Sql
     )
 
@@ -59,10 +59,10 @@ function Test-MiraDbSqlSafety {
 function Test-MiraDbRequiredParameters {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)]
+        [Parameter()]
         [hashtable]$Parameters,
 
-        [Parameter(Mandatory = $true)]
+        [Parameter()]
         [string[]]$RequiredParameterNames
     )
 
@@ -96,7 +96,7 @@ function Invoke-MiraDbQuerySafe {
         [ValidateSet("schema_check", "dry_run", "apply")]
         [string]$Mode = "dry_run",
 
-        [Parameter(Mandatory = $true)]
+        [Parameter()]
         [string]$Sql,
 
         [hashtable]$Parameters = @{},
