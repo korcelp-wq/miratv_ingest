@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Run the governed provider snapshot import workflow.
 
@@ -27,7 +27,7 @@
 param(
     [string]$Environment = "dev",
     [int]$MacUserId = 6,
-    [string]$ProviderLabel = "eldervpn",
+    [string]$ProviderLabel = "",
     [int]$Limit = 25,
     [switch]$Apply,
     [switch]$Quiet
@@ -396,3 +396,4 @@ catch {
     Write-Error "FAILED: provider snapshot governed import runner failed. $message run_id=$RunId"
     exit 1
 }
+

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Run the governed provider snapshot spine for one MiraTV account.
 
@@ -34,7 +34,7 @@ param(
     [string]$KillSwitchName = "ENABLE_PROVIDER_SNAPSHOT_SPINE_RUNNER",
 
     [int]$MacUserId = 6,
-    [string]$ProviderLabel = "eldervpn",
+    [string]$ProviderLabel = "",
 
     [string]$OutputRoot = "runtime/reports/provider_snapshot_spine_runner",
 
@@ -399,3 +399,4 @@ catch {
     Write-Error "FAILED: provider snapshot spine runner failed. run_id=$script:RunId $errorMessage"
     exit 1
 }
+

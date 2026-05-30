@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Build a governed Series categories provider snapshot for one MiraTV account.
 
@@ -36,7 +36,7 @@ param(
     [string]$KillSwitchName = "ENABLE_PROVIDER_SERIES_CATEGORIES_SNAPSHOT",
 
     [int]$MacUserId = 6,
-    [string]$ProviderLabel = "eldervpn",
+    [string]$ProviderLabel = "",
     [string]$GatewayBaseUrl = "https://miratv.club",
 
     [string]$SnapshotRoot = "runtime/provider_snapshots/series_categories",
@@ -852,3 +852,4 @@ catch {
     Write-Error "FAILED: provider Series categories snapshot failed. run_id=$script:RunId $errorMessage"
     exit 1
 }
+

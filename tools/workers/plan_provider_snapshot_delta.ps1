@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Plan provider snapshot deltas across governed snapshot workers.
 
@@ -24,7 +24,7 @@ param(
     [string]$KillSwitchName = "ENABLE_PROVIDER_SNAPSHOT_DELTA_PLAN",
 
     [int]$MacUserId = 6,
-    [string]$ProviderLabel = "eldervpn",
+    [string]$ProviderLabel = "",
 
     [string]$ReportsRoot = "runtime/reports",
     [string]$OutputRoot = "runtime/reports/provider_snapshot_delta"
@@ -454,3 +454,4 @@ catch {
     Write-Error "FAILED: provider snapshot delta plan failed. run_id=$script:RunId $errorMessage"
     exit 1
 }
+

@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Inspect current provider account context for one MiraTV app account.
 
@@ -30,7 +30,7 @@ param(
     [string]$KillSwitchName = "ENABLE_PROVIDER_ACCOUNT_CONTEXT_INSPECTION",
 
     [int]$MacUserId = 6,
-    [string]$ProviderLabel = "eldervpn",
+    [string]$ProviderLabel = "",
     [string]$GatewayBaseUrl = "https://miratv.club",
     [string]$OutputRoot = "runtime/reports/provider_account_context_inspection",
 
@@ -603,3 +603,4 @@ catch {
     Write-Error "FAILED: provider account context inspection failed. run_id=$script:RunId $errorMessage"
     exit 1
 }
+

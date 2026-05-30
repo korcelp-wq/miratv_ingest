@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Build a governed Live streams provider snapshot for one MiraTV account.
 
@@ -36,7 +36,7 @@ param(
     [string]$KillSwitchName = "ENABLE_PROVIDER_LIVE_STREAMS_SNAPSHOT",
 
     [int]$MacUserId = 6,
-    [string]$ProviderLabel = "eldervpn",
+    [string]$ProviderLabel = "",
     [string]$GatewayBaseUrl = "https://miratv.club",
 
     [string]$SnapshotRoot = "runtime/provider_snapshots/live_streams",
@@ -870,3 +870,4 @@ catch {
     Write-Error "FAILED: provider live streams snapshot failed. run_id=$script:RunId $errorMessage"
     exit 1
 }
+

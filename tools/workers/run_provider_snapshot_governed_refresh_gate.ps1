@@ -23,7 +23,7 @@
 param(
     [string]$Environment = "dev",
     [int]$MacUserId = 6,
-    [string]$ProviderLabel = "eldervpn",
+    [string]$ProviderLabel = "",
     [switch]$Quiet
 )
 
@@ -302,3 +302,4 @@ catch {
     Write-Error "FAILED: provider snapshot governed refresh gate failed. $message run_id=$RunId"
     exit 1
 }
+
