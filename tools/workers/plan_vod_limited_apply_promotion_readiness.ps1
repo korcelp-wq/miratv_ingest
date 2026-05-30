@@ -299,7 +299,22 @@ try {
         $blockers += "safe_adapter_schema_check_not_promoted"
     }
 
-    $blockers += "safe_adapter_apply_mode_not_implemented"
+    $safeAdapterPath = Join-Path $RepoRoot "tools\common\MiraDbSafeAdapter.psm1"
+    $safeAdapterText = ""
+    if (Test-Path -LiteralPath $safeAdapterPath) {
+        $safeAdapterText = Get-Content -LiteralPath $safeAdapterPath -Raw
+    }
+
+    if (
+        $safeAdapterText -like "*function Invoke-MiraDbApply*" -and
+        $safeAdapterText -like "*Invoke-DogOpenProc*" -and
+        $safeAdapterText -notlike "*blocked_apply_db_adapter_not_implemented*"
+    ) {
+        $passedChecks += "safe_adapter_apply_mode_implemented"
+    }
+    else {
+        $blockers += "safe_adapter_apply_mode_not_implemented"
+    }
     if ($applyDisposition -eq "blocked_apply_write_authorization_missing" -and -not $applyDbWrites -and $applyActualWriteCount -eq 0) {
         $passedChecks += "real_db_write_authorization_gate_enabled"
     }
@@ -405,6 +420,7 @@ catch {
     Write-Error "FAILED: VOD limited apply promotion readiness failed. $message run_id=$RunId"
     exit 1
 }
+
 
 
 
