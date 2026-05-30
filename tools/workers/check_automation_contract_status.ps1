@@ -545,6 +545,13 @@ try {
             RequiredKillSwitch = "ENABLE_VOD_STREAMS_APPLY_SQL_CONTRACT_PLANNER"
         },
         @{
+            Name = "test_vod_streams_sql_parameter_binding_fixture"
+            Path = "tools\workers\test_vod_streams_sql_parameter_binding_fixture.ps1"
+            Recurring = $false
+            RequiredSignals = @("vod_streams_sql_parameter_binding_fixture_completed")
+            RequiredKillSwitch = "ENABLE_VOD_STREAMS_SQL_PARAMETER_BINDING_FIXTURE_TEST"
+        },
+        @{
             Name = "check_grinder_disposition_contract"
             Path = "tools\workers\check_grinder_disposition_contract.ps1"
             Recurring = $false
@@ -820,6 +827,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
