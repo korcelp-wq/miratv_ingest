@@ -566,6 +566,13 @@ try {
             RequiredKillSwitch = "ENABLE_VOD_APPLY_DB_SCHEMA_CONTRACT_TEST"
         },
         @{
+            Name = "inventory_powershell_db_connection_paths"
+            Path = "tools\workers\inventory_powershell_db_connection_paths.ps1"
+            Recurring = $false
+            RequiredSignals = @("powershell_db_connection_path_inventory_completed")
+            RequiredKillSwitch = "ENABLE_POWERSHELL_DB_CONNECTION_PATH_INVENTORY"
+        },
+        @{
             Name = "check_grinder_disposition_contract"
             Path = "tools\workers\check_grinder_disposition_contract.ps1"
             Recurring = $false
@@ -841,6 +848,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
