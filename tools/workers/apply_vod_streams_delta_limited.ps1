@@ -7,24 +7,21 @@
 
   Current behavior:
     - Default is dry-run.
-    - DB writes are disabled.
     - Provider calls are disabled.
-    - Real apply is refused until a later promoted implementation.
+    - DB writes are disabled unless the explicit write gate passes.
     - A real write request requires all of the following:
         -Apply
         -AllowDbWrite
         ENABLE_VOD_STREAMS_DELTA_LIMITED_APPLY_WRITES=true
         -WriteAuthorizationCode "APPLY_VOD_STREAMS_DELTA_LIMITED"
-    - Even when the write authorization gate passes, actual DB apply is still
-      blocked by real_db_apply_not_promoted until the adapter write path is
-      explicitly implemented.
     - The worker self-blocks unless the latest real selector says:
         candidate_found=True
         selected_lane=vod_streams
         next_worker=apply_vod_streams_delta_limited.ps1
     - Synthetic simulator output is never accepted as apply authorization.
     - When a real candidate exists, this worker routes candidate rows through
-      tools/common/MiraDbSafeAdapter.psm1 in dry-run mode only.
+      tools/common/MiraDbSafeAdapter.psm1 in dry-run mode by default, or apply
+      mode only when all explicit write gates pass.
     - Row-level disposition discipline is enforced.
 
 .CONTRACT-MARKERS
@@ -386,16 +383,10 @@ try {
     if (-not (Test-Path -LiteralPath $AdapterModulePath)) { $blockReasons += "safe_adapter_module_missing" }
 
     if (@($blockReasons).Count -eq 0) {
-        if ($Apply) {
-            if (-not $writeAuthorization.authorized) {
-                $disposition = "blocked_apply_write_authorization_missing"
-                foreach ($reason in @($writeAuthorization.block_reasons)) {
-                    $blockReasons += $reason
-                }
-            }
-            else {
-                $disposition = "blocked_apply_not_implemented_yet"
-                $blockReasons += "real_db_apply_not_promoted"
+        if ($Apply -and -not $writeAuthorization.authorized) {
+            $disposition = "blocked_apply_write_authorization_missing"
+            foreach ($reason in @($writeAuthorization.block_reasons)) {
+                $blockReasons += $reason
             }
         }
         else {
@@ -429,6 +420,7 @@ try {
                         provider_stream_id = [string]$parameters.provider_stream_id
                         missing_required_parameters = ($missingRequired -join "|")
                         adapter_status = "skipped"
+                        rows_affected = 0
                         db_reads = $false
                         db_writes = $false
                         provider_calls = $false
@@ -436,25 +428,52 @@ try {
                     continue
                 }
 
-                $adapterResult = Invoke-MiraDbQuerySafe `
-                    -Mode "dry_run" `
-                    -Sql $sqlTemplate `
-                    -Parameters $parameters `
-                    -RequiredParameterNames $requiredParameters `
-                    -Limit $Limit
+                if ($Apply) {
+                    $adapterResult = Invoke-MiraDbQuerySafe `
+                        -Mode "apply" `
+                        -AllowDbWrite `
+                        -Sql $sqlTemplate `
+                        -Parameters $parameters `
+                        -RequiredParameterNames $requiredParameters `
+                        -Limit $Limit
+                }
+                else {
+                    $adapterResult = Invoke-MiraDbQuerySafe `
+                        -Mode "dry_run" `
+                        -Sql $sqlTemplate `
+                        -Parameters $parameters `
+                        -RequiredParameterNames $requiredParameters `
+                        -Limit $Limit
+                }
 
                 $adapterDisposition = [string]($adapterResult.PSObject.Properties | Where-Object { $_.Name -ieq "disposition" } | Select-Object -ExpandProperty Value -First 1)
                 $adapterMissingParameters = [string]($adapterResult.PSObject.Properties | Where-Object { $_.Name -ieq "missing_parameters" } | Select-Object -ExpandProperty Value -First 1)
                 $adapterStatus = [string]($adapterResult.PSObject.Properties | Where-Object { $_.Name -ieq "status" } | Select-Object -ExpandProperty Value -First 1)
+                $adapterRowsAffectedText = [string]($adapterResult.PSObject.Properties | Where-Object { $_.Name -ieq "rows_affected" } | Select-Object -ExpandProperty Value -First 1)
                 $adapterDbReadsText = [string]($adapterResult.PSObject.Properties | Where-Object { $_.Name -ieq "db_reads" } | Select-Object -ExpandProperty Value -First 1)
                 $adapterDbWritesText = [string]($adapterResult.PSObject.Properties | Where-Object { $_.Name -ieq "db_writes" } | Select-Object -ExpandProperty Value -First 1)
                 $adapterProviderCallsText = [string]($adapterResult.PSObject.Properties | Where-Object { $_.Name -ieq "provider_calls" } | Select-Object -ExpandProperty Value -First 1)
 
-                if ($adapterDisposition -eq "dry_run_preview") {
-                    $dryRunCount++
+                $adapterRowsAffected = 0
+                [void][int]::TryParse($adapterRowsAffectedText, [ref]$adapterRowsAffected)
+
+                if ($Apply) {
+                    if ($adapterDisposition -eq "apply_completed" -and $adapterDbWritesText -eq "True") {
+                        $actualWriteCount += $adapterRowsAffected
+                        $wouldWriteCount++
+                        if ($adapterRowsAffected -gt 0) { $dbWrites = $true }
+                    }
+                    else {
+                        $rejectedCount++
+                    }
                 }
                 else {
-                    $rejectedCount++
+                    if ($adapterDisposition -eq "dry_run_preview") {
+                        $dryRunCount++
+                    }
+                    else {
+                        $rejectedCount++
+                    }
                 }
 
                 $adapterRows += [pscustomobject][ordered]@{
@@ -463,16 +482,30 @@ try {
                     provider_stream_id = [string]$parameters.provider_stream_id
                     missing_required_parameters = $adapterMissingParameters
                     adapter_status = $adapterStatus
+                    rows_affected = $adapterRowsAffected
                     db_reads = ($adapterDbReadsText -eq "True")
                     db_writes = ($adapterDbWritesText -eq "True")
                     provider_calls = ($adapterProviderCallsText -eq "True")
                 }
             }
 
-            $disposition = "dry_run_adapter_preview_completed"
-            $wouldWriteCount = $dryRunCount
-            $actualWriteCount = 0
-            $dbWrites = $false
+            if ($Apply) {
+                if ($actualWriteCount -gt 0 -and $rejectedCount -eq 0) {
+                    $disposition = "apply_completed"
+                }
+                elseif ($actualWriteCount -gt 0) {
+                    $disposition = "apply_completed_with_rejections"
+                }
+                else {
+                    $disposition = "apply_completed_no_rows_affected"
+                }
+            }
+            else {
+                $disposition = "dry_run_adapter_preview_completed"
+                $wouldWriteCount = $dryRunCount
+                $actualWriteCount = 0
+                $dbWrites = $false
+            }
         }
     }
 

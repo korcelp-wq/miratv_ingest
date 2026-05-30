@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Safe database adapter for MiraTV governed import/apply gates.
 
@@ -247,22 +247,46 @@ function Invoke-MiraDbSchemaCheck {
     }
 }
 
-function Convert-MiraDbParametersToBridgeParams {
+function Convert-MiraDbNamedSqlToPositional {
     [CmdletBinding()]
     param(
-        [hashtable]$Parameters
+        [Parameter(Mandatory = $true)]
+        [string]$Sql,
+
+        [hashtable]$Parameters = @{}
     )
 
     if ($null -eq $Parameters) {
-        return @{}
+        $Parameters = @{}
     }
 
-    $ordered = [ordered]@{}
-    foreach ($key in ($Parameters.Keys | Sort-Object)) {
-        $ordered[[string]$key] = $Parameters[$key]
-    }
+    $orderedParams = [System.Collections.Generic.List[object]]::new()
+    $missingParams = [System.Collections.Generic.List[string]]::new()
 
-    return [pscustomobject]$ordered
+    $convertedSql = [regex]::Replace(
+        $Sql,
+        ':(?<name>[A-Za-z_][A-Za-z0-9_]*)',
+        {
+            param($match)
+
+            $name = [string]$match.Groups["name"].Value
+
+            if ($Parameters.ContainsKey($name)) {
+                [void]$orderedParams.Add($Parameters[$name])
+                return "?"
+            }
+
+            [void]$missingParams.Add($name)
+            return $match.Value
+        }
+    )
+
+    return [pscustomobject][ordered]@{
+        sql = $convertedSql
+        params = @($orderedParams.ToArray())
+        missing_parameters = @($missingParams.ToArray())
+        missing_parameter_text = (($missingParams.ToArray()) -join "|")
+    }
 }
 
 function Invoke-MiraDbApply {
@@ -289,12 +313,27 @@ function Invoke-MiraDbApply {
 
     Import-Module $modulePath -Force
 
-    $bridgeParams = Convert-MiraDbParametersToBridgeParams -Parameters $Parameters
+    $binding = Convert-MiraDbNamedSqlToPositional `
+        -Sql $Sql `
+        -Parameters $Parameters
+
+    if (@($binding.missing_parameters).Count -gt 0) {
+        return [pscustomobject][ordered]@{
+            status = "blocked"
+            disposition = "blocked_apply_missing_named_parameter_bindings"
+            mode = "apply"
+            missing_parameters = $binding.missing_parameter_text
+            rows_affected = 0
+            db_reads = $false
+            db_writes = $false
+            provider_calls = $false
+        }
+    }
 
     $response = Invoke-DogOpenProc `
         -DatabaseKey $DatabaseKey `
-        -Sql $Sql `
-        -Params @($bridgeParams) `
+        -Sql $binding.sql `
+        -Params @($binding.params) `
         -TimeoutSec $TimeoutSec
 
     $affected = Get-MiraDbAdapterInt `
@@ -319,6 +358,8 @@ function Invoke-MiraDbApply {
         db_reads = $false
         db_writes = $true
         provider_calls = $false
+        bound_sql = $binding.sql
+        bound_parameter_count = @($binding.params).Count
         raw_response = $response
     }
 }
@@ -494,3 +535,4 @@ function Invoke-MiraDbQuerySafe {
 }
 
 Export-ModuleMember -Function Test-MiraDbSqlSafety, Test-MiraDbRequiredParameters, Invoke-MiraDbQuerySafe, Invoke-MiraDbSchemaCheck, Invoke-MiraDbApply
+
