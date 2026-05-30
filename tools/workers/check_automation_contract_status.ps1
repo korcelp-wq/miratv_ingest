@@ -601,6 +601,13 @@ try {
             RequiredKillSwitch = "ENABLE_VOD_LIMITED_APPLY_PROMOTION_READINESS_PLANNER"
         },
         @{
+            Name = "plan_vod_schema_validation_execution_gate"
+            Path = "tools\workers\plan_vod_schema_validation_execution_gate.ps1"
+            Recurring = $false
+            RequiredSignals = @("vod_schema_validation_execution_gate_planned_completed")
+            RequiredKillSwitch = "ENABLE_VOD_SCHEMA_VALIDATION_EXECUTION_GATE_PLANNER"
+        },
+        @{
             Name = "check_grinder_disposition_contract"
             Path = "tools\workers\check_grinder_disposition_contract.ps1"
             Recurring = $false
@@ -876,6 +883,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
