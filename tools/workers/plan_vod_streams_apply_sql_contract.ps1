@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Plan the VOD streams apply SQL/parameter contract.
 
@@ -206,22 +206,18 @@ try {
     }
 
     $parameterNames = @(
-        "mac_user_id",
         "provider_label",
         "provider_stream_id",
         "provider_category_id",
         "title_raw",
         "title_clean",
-        "container_extension",
         "stream_icon",
         "added",
         "rating",
-        "tmdb_id",
         "year"
     )
 
     $requiredParameters = @(
-        "mac_user_id",
         "provider_label",
         "provider_stream_id",
         "provider_category_id",
@@ -239,53 +235,45 @@ try {
     )
 
     $targetTable = "xpdgxfsp_content.vod"
-    $keyStrategy = "mac_user_id + provider_label + provider_stream_id"
+    $keyStrategy = "provider + provider_vod_id"
     $writeStrategy = "bounded_upsert_preview_contract"
-    $applyMode = "planned_dry_run_only_until_db_adapter_selected"
+    $applyMode = "authorized_limited_apply_supported"
 
     $sqlTemplate = @"
--- PREVIEW CONTRACT ONLY. DO NOT EXECUTE FROM THIS REPORT.
--- Future adapter must bind named parameters and enforce row disposition.
+-- APPLY CONTRACT. Execute only through MiraDbSafeAdapter with explicit worker authorization.
+-- Named parameters are converted to positional bindings by the safe adapter for dog_open_proc.
 INSERT INTO xpdgxfsp_content.vod (
-    mac_user_id,
-    provider_label,
-    provider_stream_id,
-    provider_category_id,
-    name,
+    provider,
+    provider_vod_id,
+    category_id,
+    title,
     clean_search_name,
-    container_extension,
-    stream_icon,
-    added,
+    provider_poster_url,
+    added_at,
     rating,
-    tmdb_id,
-    year,
+    release_year,
     updated_at
 )
 VALUES (
-    :mac_user_id,
     :provider_label,
     :provider_stream_id,
     :provider_category_id,
     :title_raw,
     :title_clean,
-    :container_extension,
     :stream_icon,
-    :added,
-    :rating,
-    :tmdb_id,
-    :year,
+    NULLIF(:added, ''),
+    NULLIF(:rating, ''),
+    NULLIF(:year, ''),
     NOW()
 )
 ON DUPLICATE KEY UPDATE
-    provider_category_id = VALUES(provider_category_id),
-    name = COALESCE(NULLIF(VALUES(name), ''), name),
+    category_id = VALUES(category_id),
+    title = COALESCE(NULLIF(VALUES(title), ''), title),
     clean_search_name = COALESCE(NULLIF(VALUES(clean_search_name), ''), clean_search_name),
-    container_extension = COALESCE(NULLIF(VALUES(container_extension), ''), container_extension),
-    stream_icon = COALESCE(NULLIF(VALUES(stream_icon), ''), stream_icon),
-    added = COALESCE(NULLIF(VALUES(added), ''), added),
-    rating = COALESCE(NULLIF(VALUES(rating), ''), rating),
-    tmdb_id = COALESCE(NULLIF(VALUES(tmdb_id), ''), tmdb_id),
-    year = COALESCE(NULLIF(VALUES(year), ''), year),
+    provider_poster_url = COALESCE(NULLIF(VALUES(provider_poster_url), ''), provider_poster_url),
+    added_at = COALESCE(VALUES(added_at), added_at),
+    rating = COALESCE(VALUES(rating), rating),
+    release_year = COALESCE(VALUES(release_year), release_year),
     updated_at = NOW();
 "@
 
@@ -441,3 +429,4 @@ catch {
     Write-Error "FAILED: VOD streams apply SQL contract planner failed. $message run_id=$RunId"
     exit 1
 }
+
