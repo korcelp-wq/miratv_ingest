@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Validate VOD apply DB schema with optional explicit DB-read-only execution.
 
@@ -254,26 +254,35 @@ try {
     $schemaContract = Read-JsonFile -Path $(if ($schemaContractFile) { $schemaContractFile.FullName } else { "" })
 
     $targetTable = Get-Text -Object $schemaContract -Name "target_table" -Default "xpdgxfsp_content.vod"
-    $requiredUniqueKey = Get-Text -Object $schemaContract -Name "required_unique_key" -Default "mac_user_id|provider_label|provider_stream_id"
+    $requiredUniqueKey = Get-Text -Object $schemaContract -Name "required_unique_key" -Default "provider|provider_vod_id"
 
     $requiredColumns = @(
-        "mac_user_id",
-        "provider_label",
-        "provider_stream_id",
-        "provider_category_id",
-        "name",
+        "provider",
+        "provider_vod_id",
+        "category_id",
+        "title",
         "updated_at"
     )
 
+    if ($schemaContract -and $schemaContract.PSObject.Properties.Name -contains "required_columns") {
+        $requiredColumns = @($schemaContract.required_columns | ForEach-Object { [string]$_ })
+    }
+
     $optionalColumns = @(
         "clean_search_name",
-        "container_extension",
-        "stream_icon",
-        "added",
+        "provider_poster_url",
+        "provider_url",
+        "poster_url",
+        "cover_url",
         "rating",
-        "tmdb_id",
-        "year"
+        "release_year",
+        "duration",
+        "primary_genre"
     )
+
+    if ($schemaContract -and $schemaContract.PSObject.Properties.Name -contains "optional_columns") {
+        $optionalColumns = @($schemaContract.optional_columns | ForEach-Object { [string]$_ })
+    }
 
     $status = "warning"
     $disposition = "blocked_requires_explicit_allow_db_read"
@@ -297,44 +306,48 @@ try {
         $blockers += "allow_db_read_not_passed"
     }
     else {
-        $dbEnv = Get-DbEnv
-        if (@($dbEnv.missing).Count -gt 0) {
-            $blockers += "missing_db_env:" + (($dbEnv.missing) -join ",")
-            $disposition = "blocked_missing_db_env"
+        $dbQueryModule = Join-Path $RepoRoot "tools\common\DbQuery.psm1"
+
+        if (-not (Test-Path -LiteralPath $dbQueryModule)) {
+            $blockers += "db_query_module_missing"
+            $disposition = "blocked_missing_db_query_module"
         }
         else {
-            $passedChecks += "db_env_present"
+            Import-Module $dbQueryModule -Force
+            $passedChecks += "db_query_module_loaded"
 
-            $columnQuery = "SHOW COLUMNS FROM xpdgxfsp_content.vod;"
-            $indexQuery = "SHOW INDEX FROM xpdgxfsp_content.vod;"
+            $databaseKey = "content"
+            $columnQuery = "SHOW COLUMNS FROM vod;"
+            $indexQuery = "SHOW INDEX FROM vod;"
 
-            $columnResult = Invoke-MySqlReadOnlyQuery -Db $dbEnv.values -Query $columnQuery
+            $columnEnvelope = Invoke-ReadOnlyDbQuery `
+                -DatabaseKey $databaseKey `
+                -Sql $columnQuery
             $dbReadCount++
 
-            if ($columnResult.exit_code -ne 0) {
-                $blockers += "show_columns_query_failed"
-            }
-            else {
-                $columnsFound = @(
-                    $columnResult.output -split "`n" |
-                        Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-                        ForEach-Object { ($_ -split "`t")[0] }
-                )
+            $columnRows = @($columnEnvelope[0].rows)
+            if (@($columnRows).Count -gt 0) {
+                $columnsFound = @($columnRows | ForEach-Object { [string]$_.Field })
                 $passedChecks += "show_columns_query_passed"
             }
+            else {
+                $blockers += "show_columns_query_returned_no_rows"
+            }
 
-            $indexResult = Invoke-MySqlReadOnlyQuery -Db $dbEnv.values -Query $indexQuery
+            $indexEnvelope = Invoke-ReadOnlyDbQuery `
+                -DatabaseKey $databaseKey `
+                -Sql $indexQuery
             $dbReadCount++
 
-            if ($indexResult.exit_code -ne 0) {
-                $blockers += "show_index_query_failed"
+            $indexRows = @($indexEnvelope[0].rows)
+            if (@($indexRows).Count -gt 0) {
+                $indexesFound = @($indexRows | ForEach-Object {
+                    "{0}|{1}|{2}|{3}" -f ([string]$_.Key_name), ([string]$_.Non_unique), ([string]$_.Seq_in_index), ([string]$_.Column_name)
+                })
+                $passedChecks += "show_index_query_passed"
             }
             else {
-                $indexesFound = @(
-                    $indexResult.output -split "`n" |
-                        Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
-                )
-                $passedChecks += "show_index_query_passed"
+                $blockers += "show_index_query_returned_no_rows"
             }
 
             foreach ($column in $requiredColumns) {
@@ -350,13 +363,26 @@ try {
                 $blockers += "missing_required_columns:" + (($missingColumns) -join ",")
             }
 
-            $keyText = ($indexesFound -join "`n").ToLowerInvariant()
-            if ($keyText -match "mac_user_id" -and $keyText -match "provider_label" -and $keyText -match "provider_stream_id") {
-                $keyFound = $true
+            $uniqueIndexGroups = @($indexRows |
+                Where-Object { [string]$_.Non_unique -eq "0" } |
+                Group-Object -Property Key_name)
+
+            foreach ($group in $uniqueIndexGroups) {
+                $keyColumns = @($group.Group |
+                    Sort-Object { [int]$_.Seq_in_index } |
+                    ForEach-Object { [string]$_.Column_name })
+
+                if (($keyColumns -join "|") -eq $requiredUniqueKey) {
+                    $keyFound = $true
+                    break
+                }
+            }
+
+            if ($keyFound) {
                 $passedChecks += "required_identity_index_columns_seen"
             }
             else {
-                $blockers += "required_identity_index_columns_not_seen"
+                $blockers += "required_identity_index_columns_not_seen:" + $requiredUniqueKey
             }
 
             if (@($blockers).Count -eq 0) {
