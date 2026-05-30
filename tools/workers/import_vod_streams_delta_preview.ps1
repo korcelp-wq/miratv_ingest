@@ -1,6 +1,6 @@
 ﻿<#
 .CONTRACT-SIGNALS
-  vod_streams_delta_import_preview_completed
+  provider_snapshot_vod_streams_import_preview_completed
   vod_streams_delta_import_preview_disposition
   vod_streams_delta_import_preview_planned_import_count
   vod_streams_delta_import_preview_provider_noise_count
@@ -44,7 +44,7 @@ $DatabaseTarget = "none"
 $SourceName = "provider_snapshot_vod_streams"
 $KillSwitchName = "ENABLE_VOD_STREAMS_DELTA_IMPORT_PREVIEW"
 
-$CompletedSignal = "vod_streams_delta_import_preview_completed"
+$CompletedSignal = "provider_snapshot_vod_streams_import_preview_completed"
 $DispositionSignal = "vod_streams_delta_import_preview_disposition"
 $PlannedImportCountSignal = "vod_streams_delta_import_preview_planned_import_count"
 $ProviderNoiseCountSignal = "vod_streams_delta_import_preview_provider_noise_count"
@@ -506,4 +506,6 @@ catch {
     Write-Error "FAILED: VOD streams delta item preview failed. $message run_id=$RunId"
     exit 1
 }
+
+
 
