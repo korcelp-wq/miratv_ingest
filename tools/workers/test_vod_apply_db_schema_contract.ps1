@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Plan and validate the VOD apply DB schema contract.
 
@@ -231,25 +231,26 @@ try {
     $parameterCount = Get-Text -Object $sqlContractSummary -Name "parameter_count" -Default "0"
 
     $columnRows = @(
-        New-ColumnContractRow -ColumnName "mac_user_id" -Requirement "required" -MappedParameter "mac_user_id" -ExpectedPurpose "tenant/account scope" -Required $true
-        New-ColumnContractRow -ColumnName "provider_label" -Requirement "required" -MappedParameter "provider_label" -ExpectedPurpose "provider namespace" -Required $true
-        New-ColumnContractRow -ColumnName "provider_stream_id" -Requirement "required" -MappedParameter "provider_stream_id" -ExpectedPurpose "provider VOD identity" -Required $true
-        New-ColumnContractRow -ColumnName "provider_category_id" -Requirement "required" -MappedParameter "provider_category_id" -ExpectedPurpose "provider category grouping" -Required $true
-        New-ColumnContractRow -ColumnName "name" -Requirement "required" -MappedParameter "title_raw" -ExpectedPurpose "provider display title" -Required $true
+        New-ColumnContractRow -ColumnName "provider" -Requirement "required" -MappedParameter "provider_label" -ExpectedPurpose "provider namespace / catalog source" -Required $true
+        New-ColumnContractRow -ColumnName "provider_vod_id" -Requirement "required" -MappedParameter "provider_stream_id" -ExpectedPurpose "provider VOD identity" -Required $true
+        New-ColumnContractRow -ColumnName "category_id" -Requirement "required" -MappedParameter "provider_category_id" -ExpectedPurpose "provider category grouping" -Required $true
+        New-ColumnContractRow -ColumnName "title" -Requirement "required" -MappedParameter "title_raw" -ExpectedPurpose "provider display title" -Required $true
+        New-ColumnContractRow -ColumnName "updated_at" -Requirement "required" -MappedParameter "CURRENT_TIMESTAMP" -ExpectedPurpose "write/update timestamp" -Required $true
         New-ColumnContractRow -ColumnName "clean_search_name" -Requirement "optional" -MappedParameter "title_clean" -ExpectedPurpose "normalized search title" -Required $false
-        New-ColumnContractRow -ColumnName "container_extension" -Requirement "optional" -MappedParameter "container_extension" -ExpectedPurpose "playback container resolution" -Required $false
-        New-ColumnContractRow -ColumnName "stream_icon" -Requirement "optional" -MappedParameter "stream_icon" -ExpectedPurpose "provider artwork fallback" -Required $false
-        New-ColumnContractRow -ColumnName "added" -Requirement "optional" -MappedParameter "added" -ExpectedPurpose "provider added timestamp" -Required $false
-        New-ColumnContractRow -ColumnName "rating" -Requirement "optional" -MappedParameter "rating" -ExpectedPurpose "provider rating fallback" -Required $false
-        New-ColumnContractRow -ColumnName "tmdb_id" -Requirement "optional" -MappedParameter "tmdb_id" -ExpectedPurpose "enrichment identity" -Required $false
-        New-ColumnContractRow -ColumnName "year" -Requirement "optional" -MappedParameter "year" -ExpectedPurpose "release year fallback" -Required $false
-        New-ColumnContractRow -ColumnName "updated_at" -Requirement "required" -MappedParameter "NOW()" -ExpectedPurpose "write timestamp" -Required $true
+        New-ColumnContractRow -ColumnName "provider_poster_url" -Requirement "optional" -MappedParameter "stream_icon" -ExpectedPurpose "provider artwork fallback" -Required $false
+        New-ColumnContractRow -ColumnName "provider_url" -Requirement "optional" -MappedParameter "provider_url" -ExpectedPurpose "provider playback/details URL metadata" -Required $false
+        New-ColumnContractRow -ColumnName "poster_url" -Requirement "optional" -MappedParameter "poster_url" -ExpectedPurpose "enriched poster artwork" -Required $false
+        New-ColumnContractRow -ColumnName "cover_url" -Requirement "optional" -MappedParameter "cover_url" -ExpectedPurpose "enriched cover/backdrop artwork" -Required $false
+        New-ColumnContractRow -ColumnName "rating" -Requirement "optional" -MappedParameter "rating" -ExpectedPurpose "provider/enriched rating fallback" -Required $false
+        New-ColumnContractRow -ColumnName "release_year" -Requirement "optional" -MappedParameter "year" -ExpectedPurpose "release year fallback" -Required $false
+        New-ColumnContractRow -ColumnName "duration" -Requirement "optional" -MappedParameter "duration" -ExpectedPurpose "runtime fallback" -Required $false
+        New-ColumnContractRow -ColumnName "primary_genre" -Requirement "optional" -MappedParameter "primary_genre" -ExpectedPurpose "primary genre/category grouping" -Required $false
     )
 
     $uniqueKeyRows = @(
         [pscustomobject][ordered]@{
             key_name = "preferred_unique_vod_provider_identity"
-            key_columns = "mac_user_id|provider_label|provider_stream_id"
+            key_columns = "provider|provider_vod_id"
             required_before_apply = $true
             validation_query_name = "show_unique_indexes_for_vod"
             db_writes = $false
@@ -316,7 +317,7 @@ try {
         parameter_count = $parameterCount
         required_columns = @($columnRows | Where-Object { $_.required_for_first_apply -eq $true } | ForEach-Object { $_.column_name })
         optional_columns = @($columnRows | Where-Object { $_.required_for_first_apply -ne $true } | ForEach-Object { $_.column_name })
-        required_unique_key = "mac_user_id|provider_label|provider_stream_id"
+        required_unique_key = "provider|provider_vod_id"
         validation_queries_file = $queryJson
         blocked_reasons = $blockedReasons
         db_reads = $false
@@ -339,7 +340,7 @@ try {
         schema_readiness = $schemaReadiness
         required_column_count = @($columnRows | Where-Object { $_.required_for_first_apply -eq $true }).Count
         total_column_count = @($columnRows).Count
-        required_unique_key = "mac_user_id|provider_label|provider_stream_id"
+        required_unique_key = "provider|provider_vod_id"
         blocked_reasons = $blockedReasons
         adapter_summary_json = $adapterSummaryFile.FullName
         sql_contract_summary_json = $sqlContractSummaryFile.FullName
