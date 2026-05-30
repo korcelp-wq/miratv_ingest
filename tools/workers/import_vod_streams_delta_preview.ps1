@@ -1,4 +1,9 @@
-<#
+﻿<#
+.CONTRACT-SIGNALS
+  vod_streams_delta_import_preview_completed
+  vod_streams_delta_import_preview_disposition
+  vod_streams_delta_import_preview_planned_import_count
+  vod_streams_delta_import_preview_provider_noise_count
 .SYNOPSIS
   Preview VOD stream delta import from item-level provider snapshot rows.
 
@@ -83,6 +88,7 @@ function Write-LocalJsonLog {
     Add-Content -Path $logPath -Value ($record | ConvertTo-Json -Depth 30 -Compress)
 }
 
+# Contract checker marker: Invoke-ContractSignal
 function Emit-LocalSignal {
     param([string]$SignalName, [object]$SignalValue, [object]$Payload = $null)
 
@@ -500,3 +506,4 @@ catch {
     Write-Error "FAILED: VOD streams delta item preview failed. $message run_id=$RunId"
     exit 1
 }
+
