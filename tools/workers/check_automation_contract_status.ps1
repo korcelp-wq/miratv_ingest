@@ -615,6 +615,13 @@ try {
             RequiredKillSwitch = "ENABLE_VOD_APPLY_DB_SCHEMA_LIVE_READ_TEST"
         },
         @{
+            Name = "check_vod_query_wrapper_prerequisites"
+            Path = "tools\workers\check_vod_query_wrapper_prerequisites.ps1"
+            Recurring = $false
+            RequiredSignals = @("vod_query_wrapper_prerequisites_check_completed")
+            RequiredKillSwitch = "ENABLE_VOD_QUERY_WRAPPER_PREREQUISITES_CHECK"
+        },
+        @{
             Name = "check_grinder_disposition_contract"
             Path = "tools\workers\check_grinder_disposition_contract.ps1"
             Recurring = $false
@@ -890,6 +897,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
