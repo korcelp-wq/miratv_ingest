@@ -594,6 +594,13 @@ try {
             RequiredKillSwitch = "ENABLE_VOD_APPLY_SAFE_ADAPTER_INTEGRATION_FIXTURE_TEST"
         },
         @{
+            Name = "plan_vod_limited_apply_promotion_readiness"
+            Path = "tools\workers\plan_vod_limited_apply_promotion_readiness.ps1"
+            Recurring = $false
+            RequiredSignals = @("vod_limited_apply_promotion_readiness_completed")
+            RequiredKillSwitch = "ENABLE_VOD_LIMITED_APPLY_PROMOTION_READINESS_PLANNER"
+        },
+        @{
             Name = "check_grinder_disposition_contract"
             Path = "tools\workers\check_grinder_disposition_contract.ps1"
             Recurring = $false
@@ -869,6 +876,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
