@@ -657,6 +657,13 @@ try {
             RequiredKillSwitch = "ENABLE_VOD_DELTA_PREVIEW_DISPOSITION_AUDIT"
         },
         @{
+            Name = "audit_provider_import_controls_and_switches"
+            Path = "tools\workers\audit_provider_import_controls_and_switches.ps1"
+            Recurring = $false
+            RequiredSignals = @("provider_import_controls_audit_completed")
+            RequiredKillSwitch = "ENABLE_PROVIDER_IMPORT_CONTROLS_AUDIT"
+        },
+        @{
             Name = "check_grinder_disposition_contract"
             Path = "tools\workers\check_grinder_disposition_contract.ps1"
             Recurring = $false
@@ -932,6 +939,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
