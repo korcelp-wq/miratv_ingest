@@ -629,6 +629,13 @@ try {
             RequiredKillSwitch = "ENABLE_VOD_SCHEMA_VALIDATION_QUERY_WRAPPER_GATE_PLANNER"
         },
         @{
+            Name = "inspect_query_wrapper_invocation_shape"
+            Path = "tools\workers\inspect_query_wrapper_invocation_shape.ps1"
+            Recurring = $false
+            RequiredSignals = @("query_wrapper_invocation_shape_inspected_completed")
+            RequiredKillSwitch = "ENABLE_QUERY_WRAPPER_INVOCATION_SHAPE_INSPECTOR"
+        },
+        @{
             Name = "check_grinder_disposition_contract"
             Path = "tools\workers\check_grinder_disposition_contract.ps1"
             Recurring = $false
@@ -904,6 +911,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
