@@ -362,6 +362,7 @@ function Convert-VodItemToPreviewRow {
         operation_guess = "import"
         row_disposition = $rowDisposition
         recommended_action = $recommendedAction
+        import_status = ""
         missing_fields = ($missing -join "|")
         mac_user_id = $macUserId
         provider_label = $providerLabel
@@ -536,6 +537,7 @@ catch {
     Write-Error "FAILED: VOD streams delta item preview failed. $message run_id=$RunId"
     exit 1
 }
+
 
 
 
