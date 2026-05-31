@@ -419,6 +419,13 @@ try {
             RequiredKillSwitch = "ENABLE_PROVIDER_SNAPSHOT_VOD_STREAMS_IMPORT_PREVIEW"
         },
         @{
+            Name = "import_live_streams_delta_preview"
+            Path = "tools\workers\import_live_streams_delta_preview.ps1"
+            Recurring = $false
+            RequiredSignals = @("provider_snapshot_live_streams_import_preview_completed")
+            RequiredKillSwitch = "ENABLE_PROVIDER_SNAPSHOT_LIVE_STREAMS_IMPORT_PREVIEW"
+        },
+        @{
             Name = "import_vod_streams_delta_row_preview"
             Path = "tools\workers\import_vod_streams_delta_row_preview.ps1"
             Recurring = $false
@@ -946,6 +953,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 

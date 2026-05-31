@@ -42,7 +42,7 @@ $WorkerName = "import_live_streams_delta_preview"
 $Component = "live_streams_delta_import_preview"
 $DatabaseTarget = "none"
 $SourceName = "provider_snapshot_live_streams"
-$KillSwitchName = "ENABLE_LIVE_STREAMS_DELTA_IMPORT_PREVIEW"
+$KillSwitchName = "ENABLE_PROVIDER_SNAPSHOT_LIVE_STREAMS_IMPORT_PREVIEW"
 
 $CompletedSignal = "provider_snapshot_live_streams_import_preview_completed"
 $DispositionSignal = "live_streams_delta_import_preview_disposition"
@@ -343,10 +343,12 @@ function Convert-LiveItemToPreviewRow {
     $macUserId = Get-Field -Row $Item -Names @("mac_user_id") -Default "6"
 
     $missing = @()
-    if ([string]::IsNullOrWhiteSpace($providerStreamId)) { $missing += "provider_stream_id" }
-    if ([string]::IsNullOrWhiteSpace($providerCategoryId)) { $missing += "provider_category_id" }
-    if ([string]::IsNullOrWhiteSpace($titleRaw)) { $missing += "title_raw" }
-    if ([string]::IsNullOrWhiteSpace($containerExtension)) { $missing += "container_extension" }
+   if ([string]::IsNullOrWhiteSpace($providerStreamId)) { $missing += "provider_stream_id" }
+   if ([string]::IsNullOrWhiteSpace($providerCategoryId)) { $missing += "provider_category_id" }
+   if ([string]::IsNullOrWhiteSpace($titleRaw)) { $missing += "title_raw" }
+
+# Live streams commonly do not expose container_extension.
+# Do not treat it as required for planned import.
 
     $rowDisposition = "planned_import"
     $recommendedAction = "preview_only_no_db_write"
@@ -537,6 +539,7 @@ catch {
     Write-Error "FAILED: Live streams delta item preview failed. $message run_id=$RunId"
     exit 1
 }
+
 
 
 
