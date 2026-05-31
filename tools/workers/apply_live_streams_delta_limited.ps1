@@ -401,7 +401,7 @@ try {
                     ForEach-Object { [string]$_.parameter_name }
             )
 
-            $candidateRows = @(Import-Csv -LiteralPath $livePreviewOutputCsv | Select-Object -Skip $Offset -First $Limit)
+            $candidateRows = @(Import-Csv -LiteralPath $livePreviewOutputCsv | Where-Object { [string]::IsNullOrWhiteSpace((Get-Text -Object $_ -Name "import_status" -Default "")) } | Select-Object -Skip $Offset -First $Limit)
 
             foreach ($row in $candidateRows) {
                 $parameters = Convert-ToAdapterParameters -Row $row
@@ -610,6 +610,7 @@ catch {
     Write-Error "FAILED: Live streams limited apply gate failed. $message run_id=$RunId"
     exit 1
 }
+
 
 
 
