@@ -151,11 +151,11 @@ try {
         $desc = ""
 
         if ($node.programme.title) {
-            $title = [string]$node.programme.title[0].InnerText
+            $title = [string]($node.programme.title | Select-Object -First 1)
         }
 
         if ($node.programme.desc) {
-            $desc = [string]$node.programme.desc[0].InnerText
+            $desc = [string]($node.programme.desc | Select-Object -First 1)
         }
 
         $item = [pscustomobject][ordered]@{
