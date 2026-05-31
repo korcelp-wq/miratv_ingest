@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Select the next provider snapshot import candidate.
 
@@ -265,6 +265,7 @@ try {
 
         switch ($selectedLane) {
             "vod_streams" { $next_worker = "apply_vod_streams_delta_limited.ps1" }
+            "live_streams" { $next_worker = "apply_live_streams_delta_limited.ps1" }
             default { $next_worker = "plan_lane_specific_apply_contract.ps1" }
         }
     }
@@ -362,3 +363,4 @@ catch {
     Write-Error "FAILED: provider snapshot import candidate selection failed. $message run_id=$RunId"
     exit 1
 }
+
