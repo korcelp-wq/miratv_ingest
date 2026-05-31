@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Run the governed provider snapshot spine for one MiraTV account.
 
@@ -166,8 +166,39 @@ function Invoke-ChildWorkerLocal {
     }
 }
 
+function Get-ResolvedProviderLabelFromChildOutputLocal {
+    param(
+        [string]$StdoutTail
+    )
+
+    if ([string]::IsNullOrWhiteSpace($StdoutTail)) {
+        return ""
+    }
+
+    $match = [regex]::Match($StdoutTail, 'summary_json="([^"]+)"')
+    if (-not $match.Success) {
+        return ""
+    }
+
+    $summaryPath = $match.Groups[1].Value
+    if (-not (Test-Path -LiteralPath $summaryPath)) {
+        return ""
+    }
+
+    try {
+        $summary = Get-Content -LiteralPath $summaryPath -Raw | ConvertFrom-Json
+        return [string]$summary.resolved_provider_label
+    }
+    catch {
+        return ""
+    }
+}
+
 $script:RunId = New-RunIdLocal
 $repoRoot = Get-RepoRootLocal
+$ProviderLabelForChildren = $ProviderLabel
+$ProviderLabelForChildren = $ProviderLabel
+$ProviderLabelForChildren = $ProviderLabel
 $outputRootFull = if ([System.IO.Path]::IsPathRooted($OutputRoot)) { $OutputRoot } else { Join-Path $repoRoot $OutputRoot }
 New-DirectoryLocal -Path $outputRootFull
 
@@ -200,7 +231,7 @@ try {
                     event_message = "Provider snapshot spine runner blocked by kill switch."
                     kill_switch_name = $KillSwitchName
                     mac_user_id = $MacUserId
-                    provider_label = $ProviderLabel
+                    provider_label = $ProviderLabelForChildren
                 } | Out-Null
 
             Write-Output "BLOCKED: provider snapshot spine runner blocked. run_id=$script:RunId kill_switch=$KillSwitchName"
@@ -218,7 +249,7 @@ try {
             -Data @{
                 event_message = "Provider snapshot spine runner started."
                 mac_user_id = $MacUserId
-                provider_label = $ProviderLabel
+                provider_label = $ProviderLabelForChildren
                 continue_on_error = [bool]$ContinueOnError
             } | Out-Null
     }
@@ -245,6 +276,7 @@ try {
     )
 
     $rows = @()
+    $ProviderLabelForChildren = $ProviderLabel
 
     foreach ($step in $steps) {
         $row = Invoke-ChildWorkerLocal `
@@ -253,11 +285,19 @@ try {
             -StepName ([string]$step.name) `
             -Environment $Environment `
             -MacUserId $MacUserId `
-            -ProviderLabel $ProviderLabel
+            -ProviderLabel $ProviderLabelForChildren
 
         $rows += $row
 
         Write-Output ("STEP: {0} status={1} exit_code={2} duration_ms={3}" -f $row.step_name, $row.status, $row.exit_code, $row.duration_ms)
+
+        if ($row.step_name -eq "inspect_provider_account_context" -and $row.exit_code -eq 0) {
+            $resolvedProviderLabel = Get-ResolvedProviderLabelFromChildOutputLocal -StdoutTail $row.stdout_tail
+            if (-not [string]::IsNullOrWhiteSpace($resolvedProviderLabel)) {
+                $ProviderLabelForChildren = $resolvedProviderLabel
+                Write-Output ("PROVIDER: resolved_provider_label={0}" -f $ProviderLabelForChildren)
+            }
+        }
 
         if ($row.exit_code -ne 0 -and -not $ContinueOnError) {
             break
@@ -284,7 +324,7 @@ try {
         db_imported = $false
         db_writes = $false
         mac_user_id = $MacUserId
-        provider_label = $ProviderLabel
+        provider_label = $ProviderLabelForChildren
         step_count = $steps.Count
         executed_count = $rows.Count
         pass_count = @($rows | Where-Object { $_.status -eq "pass" }).Count
@@ -399,4 +439,8 @@ catch {
     Write-Error "FAILED: provider snapshot spine runner failed. run_id=$script:RunId $errorMessage"
     exit 1
 }
+
+
+
+
 
