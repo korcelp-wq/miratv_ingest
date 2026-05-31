@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Plan VOD limited apply promotion readiness.
 
@@ -221,10 +221,23 @@ try {
     $applyDryRunAdapterCount = Get-IntValue -Object $applySummary -Name "dry_run_adapter_count" -Default 0
 
     if ($applySummaryFile) { $passedChecks += "apply_summary_present" } else { $blockers += "apply_summary_missing" }
-    if (-not $applyDbWrites -and $applyActualWriteCount -eq 0) { $passedChecks += "apply_worker_no_db_writes" } else { $blockers += "apply_worker_wrote_db_unexpected" }
+    if ((-not $applyDbWrites -and $applyActualWriteCount -eq 0) -or ($applyDisposition -eq "apply_completed" -and $applyDbWrites -and $applyActualWriteCount -gt 0)) {
+        if ($applyDisposition -eq "apply_completed") {
+            $passedChecks += "authorized_apply_path_exercised"
+        }
+        else {
+            $passedChecks += "apply_worker_no_db_writes"
+        }
+    }
+    else {
+        $blockers += "apply_worker_write_state_unexpected"
+    }
     if ($applyCandidateFound) { $passedChecks += "real_candidate_seen" } else { $blockers += "no_real_vod_candidate_yet" }
     if ($applyDisposition -eq "dry_run_adapter_preview_completed") {
         $passedChecks += "apply_adapter_dry_run_path_exercised_by_real_candidate"
+    }
+    elseif ($applyDisposition -eq "apply_completed" -and $applyDbWrites -and $applyActualWriteCount -gt 0) {
+        $passedChecks += "real_apply_adapter_path_exercised"
     }
     elseif ($applyDisposition -eq "blocked_apply_write_authorization_missing" -and -not $applyDbWrites -and $applyActualWriteCount -eq 0) {
         $passedChecks += "apply_write_authorization_gate_blocks_unapproved_apply"
@@ -315,7 +328,7 @@ try {
     else {
         $blockers += "safe_adapter_apply_mode_not_implemented"
     }
-    if ($applyDisposition -eq "blocked_apply_write_authorization_missing" -and -not $applyDbWrites -and $applyActualWriteCount -eq 0) {
+    if (($applyDisposition -eq "blocked_apply_write_authorization_missing" -and -not $applyDbWrites -and $applyActualWriteCount -eq 0) -or ($applyDisposition -eq "apply_completed" -and $applyDbWrites -and $applyActualWriteCount -gt 0)) {
         $passedChecks += "real_db_write_authorization_gate_enabled"
     }
     else {
