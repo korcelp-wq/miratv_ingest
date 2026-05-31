@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   Apply VOD streams delta with strict bounded controls.
 
@@ -529,6 +529,27 @@ try {
             db_writes = $false
             provider_calls = $false
         }
+    }
+
+
+    if ($Apply -and @($adapterRows).Count -gt 0) {
+        $previewRows = @(Import-Csv -LiteralPath $vodPreviewOutputCsv)
+
+        foreach ($adapterRow in $adapterRows) {
+            $providerStreamId = [string]$adapterRow.provider_stream_id
+            if ([string]::IsNullOrWhiteSpace($providerStreamId)) { continue }
+
+            foreach ($previewRow in ($previewRows | Where-Object { [string]$_.provider_stream_id -eq $providerStreamId })) {
+                switch ([string]$adapterRow.adapter_disposition) {
+                    "apply_completed" { $previewRow.import_status = "completed" }
+                    "not_sent_to_adapter_missing_required_parameters" { $previewRow.import_status = "needs_review" }
+                    "apply_failed" { $previewRow.import_status = "failed" }
+                    default { $previewRow.import_status = "needs_review" }
+                }
+            }
+        }
+
+        $previewRows | Export-Csv -Path $vodPreviewOutputCsv -NoTypeInformation
     }
 
     $adapterRows | Export-Csv -Path $reportCsv -NoTypeInformation
