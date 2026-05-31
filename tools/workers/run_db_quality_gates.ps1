@@ -1,4 +1,4 @@
-# MiraTV DB Quality Gates Worker
+﻿# MiraTV DB Quality Gates Worker
 # File: tools/workers/run_db_quality_gates.ps1
 # Purpose:
 #   P0.5 automated DB quality gates scaffold + read-only DB-backed mode.
@@ -33,7 +33,7 @@
 #     These are expected inventory variants and should not fail the gate.
 #
 #   Actionable duplicates:
-#     Same normalized clean/display key AND same category_id AND same provider_stream_id.
+#     Same provider AND same normalized clean/display key AND same category_id AND same provider_stream_id.
 #     These are likely actual duplicate rows and drive duplicate_ratio/actionable warning.
 #
 # Signals:
@@ -403,6 +403,7 @@ CROSS JOIN
                   AND UPPER(COALESCE(name, '')) NOT LIKE '%VEVO%'
                   AND COALESCE(NULLIF(TRIM(clean_search_name), ''), NULLIF(TRIM(name), '')) IS NOT NULL
                 GROUP BY
+                    COALESCE(provider, ''),
                     COALESCE(NULLIF(TRIM(clean_search_name), ''), NULLIF(TRIM(name), '')),
                     COALESCE(category_id, ''),
                     COALESCE(provider_stream_id, '')
