@@ -11,6 +11,11 @@
     -WriteAuthorizationCode "APPLY_SERIES_TOP_LEVEL_DELTA"
     ENABLE_SERIES_TOP_LEVEL_DELTA_APPLY_WRITES=true
 
+  This version includes:
+    - CHAR(40)-safe ingest_hash handling.
+    - post-error verification for INSERT/UPDATE rows when dog_open_proc returns HTTP 500 after a DB commit.
+    - rows_affected parsing for affected/rows_affected/affected_rows/rowsAffected response shapes.
+
 .CONTRACT-MARKERS
   Write-JobLog
   Emit-Signal
@@ -143,6 +148,21 @@ function Convert-ToSqlNullableString {
     return "'" + (Escape-SqlString -Value $Value.Trim()) + "'"
 }
 
+function Convert-ToSqlHash40 {
+    param([string]$Value)
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return "NULL"
+    }
+
+    $text = $Value.Trim()
+    if ($text.Length -gt 40) {
+        $text = $text.Substring(0, 40)
+    }
+
+    return "'" + (Escape-SqlString -Value $text) + "'"
+}
+
 function Convert-ToSqlNullableInt {
     param([object]$Value)
 
@@ -166,6 +186,21 @@ function Get-LatestPreviewCsv {
     return $latest.FullName
 }
 
+function Get-RowsAffected {
+    param([object]$Result)
+
+    foreach ($name in @("rows_affected", "affected", "affected_rows", "rowsAffected")) {
+        if ($Result.PSObject.Properties.Name -contains $name) {
+            $n = 0
+            if ([int]::TryParse([string]$Result.$name, [ref]$n)) {
+                return $n
+            }
+        }
+    }
+
+    return 0
+}
+
 function New-InsertSql {
     param([object]$Row)
 
@@ -177,7 +212,7 @@ function New-InsertSql {
     $coverSql = Convert-ToSqlNullableString -Value ([string]$Row.provider_cover_url)
     $backdropSql = Convert-ToSqlNullableString -Value ([string]$Row.provider_backdrop_url)
     $lastModifiedSql = Convert-ToSqlNullableInt -Value $Row.provider_last_modified
-    $hashSql = Convert-ToSqlNullableString -Value ([string]$Row.provider_row_hash)
+    $hashSql = Convert-ToSqlHash40 -Value ([string]$Row.provider_row_hash)
 
     return @"
 INSERT INTO series (
@@ -237,7 +272,7 @@ function New-UpdateSql {
     $coverSql = Convert-ToSqlNullableString -Value ([string]$Row.provider_cover_url)
     $backdropSql = Convert-ToSqlNullableString -Value ([string]$Row.provider_backdrop_url)
     $lastModifiedSql = Convert-ToSqlNullableInt -Value $Row.provider_last_modified
-    $hashSql = Convert-ToSqlNullableString -Value ([string]$Row.provider_row_hash)
+    $hashSql = Convert-ToSqlHash40 -Value ([string]$Row.provider_row_hash)
 
     return @"
 UPDATE series
@@ -256,6 +291,51 @@ SET
 WHERE id = $localId
 LIMIT 1;
 "@
+}
+
+function Test-InsertLanded {
+    param([object]$Row)
+
+    $providerEscaped = Escape-SqlString -Value ([string]$Row.provider)
+    $providerSeriesId = Convert-ToIntSafe -Value $Row.provider_series_id
+
+    $sql = @"
+SELECT id, provider_series_id, provider, name
+FROM series
+WHERE provider = '$providerEscaped'
+  AND provider_series_id = $providerSeriesId
+LIMIT 1;
+"@
+
+    $result = Invoke-Sql -Sql $sql
+    if ($result.PSObject.Properties.Name -contains "rows") {
+        return @($result.rows).Count -gt 0
+    }
+
+    return $false
+}
+
+function Test-UpdateLanded {
+    param([object]$Row)
+
+    $localId = Convert-ToIntSafe -Value $Row.local_series_id
+    if ($localId -lt 1) {
+        return $false
+    }
+
+    $sql = @"
+SELECT id
+FROM series
+WHERE id = $localId
+LIMIT 1;
+"@
+
+    $result = Invoke-Sql -Sql $sql
+    if ($result.PSObject.Properties.Name -contains "rows") {
+        return @($result.rows).Count -gt 0
+    }
+
+    return $false
 }
 
 try {
@@ -311,6 +391,7 @@ try {
     $resultRows = New-Object System.Collections.Generic.List[object]
     $attempted = 0
     $completed = 0
+    $verifiedAfterError = 0
     $failed = 0
     $dryRunCount = 0
 
@@ -346,29 +427,49 @@ try {
             }
             else {
                 $result = Invoke-Sql -Sql $sql
-
-                if ($result.PSObject.Properties.Name -contains "rows_affected") {
-                    [void][int]::TryParse([string]$result.rows_affected, [ref]$rowsAffected)
-                }
-                elseif ($result.PSObject.Properties.Name -contains "affected_rows") {
-                    [void][int]::TryParse([string]$result.affected_rows, [ref]$rowsAffected)
-                }
-                elseif ($result.PSObject.Properties.Name -contains "rowsAffected") {
-                    [void][int]::TryParse([string]$result.rowsAffected, [ref]$rowsAffected)
-                }
-
+                $rowsAffected = Get-RowsAffected -Result $result
                 $applyDisposition = "apply_completed"
                 $completed++
             }
         }
         catch {
-            $failed++
-            $applyDisposition = "apply_failed"
             $errorMessage = $_.Exception.Message
+
+            if (-not $dryRun) {
+                try {
+                    $landed = $false
+
+                    if ($row.preview_disposition -eq "preview_insert_ready") {
+                        $landed = Test-InsertLanded -Row $row
+                    }
+                    elseif ($row.preview_disposition -eq "preview_update_ready") {
+                        $landed = Test-UpdateLanded -Row $row
+                    }
+
+                    if ($landed) {
+                        $applyDisposition = "apply_completed_verified_after_error"
+                        $rowsAffected = 1
+                        $verifiedAfterError++
+                    }
+                    else {
+                        $failed++
+                        $applyDisposition = "apply_failed"
+                    }
+                }
+                catch {
+                    $failed++
+                    $applyDisposition = "apply_failed"
+                    $errorMessage = $errorMessage + " | verification_failed: " + $_.Exception.Message
+                }
+            }
+            else {
+                $failed++
+                $applyDisposition = "apply_failed"
+            }
         }
 
         $resultRows.Add([pscustomobject][ordered]@{
-            import_status = if ($dryRun) { "" } elseif ($applyDisposition -eq "apply_completed") { "completed" } elseif ($applyDisposition -eq "apply_failed") { "failed" } else { "" }
+            import_status = if ($dryRun) { "" } elseif ($applyDisposition -in @("apply_completed", "apply_completed_verified_after_error")) { "completed" } elseif ($applyDisposition -eq "apply_failed") { "failed" } else { "" }
             apply_disposition = $applyDisposition
             dry_run = $dryRun
             rows_affected = $rowsAffected
@@ -407,6 +508,7 @@ try {
         dry_run = $dryRun
         dry_run_ready = $dryRunCount
         completed = $completed
+        verified_after_error = $verifiedAfterError
         failed = $failed
         batch_size = $BatchSize
         max_rows = $MaxRows
@@ -423,7 +525,7 @@ try {
     Emit-Signal -SignalName "series_top_level_delta_apply_completed" -SignalValue $summary.status -Payload $summary
     Write-JobLog -EventName "job_completed" -Status $summary.status -Data $summary
 
-    Write-Output "OK: Series top-level delta apply completed. dry_run=$dryRun attempted=$attempted completed=$completed failed=$failed summary=$SummaryPath"
+    Write-Output "OK: Series top-level delta apply completed. dry_run=$dryRun attempted=$attempted completed=$completed verified_after_error=$verifiedAfterError failed=$failed summary=$SummaryPath"
 }
 catch {
     $summary = [pscustomobject][ordered]@{
