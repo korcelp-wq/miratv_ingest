@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Build a governed Live streams provider snapshot for one MiraTV account.
 
@@ -504,7 +504,7 @@ try {
 
     $provider = $ProviderLabel.Trim()
     if ([string]::IsNullOrWhiteSpace($provider)) {
-        $provider = "xtream"
+        $provider = ""
     }
 
     $script:Stage = "kill_switch"
@@ -870,4 +870,5 @@ catch {
     Write-Error "FAILED: provider live streams snapshot failed. run_id=$script:RunId $errorMessage"
     exit 1
 }
+
 

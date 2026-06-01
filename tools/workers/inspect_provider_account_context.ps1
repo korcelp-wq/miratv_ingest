@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Inspect current provider account context for one MiraTV app account.
 
@@ -294,7 +294,7 @@ try {
 
     $provider = $ProviderLabel.Trim()
     if ([string]::IsNullOrWhiteSpace($provider)) {
-        $provider = "xtream"
+        $provider = ""
     }
 
     $script:Stage = "kill_switch"
@@ -603,4 +603,5 @@ catch {
     Write-Error "FAILED: provider account context inspection failed. run_id=$script:RunId $errorMessage"
     exit 1
 }
+
 
