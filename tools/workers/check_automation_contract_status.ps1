@@ -552,6 +552,13 @@ try {
             RequiredKillSwitch = "ENABLE_EPG_RETENTION_PREVIEW"
         },
         @{
+            Name = "apply_epg_retention"
+            Path = "tools\workers\apply_epg_retention.ps1"
+            Recurring = $false
+            RequiredSignals = @("epg_retention_apply_completed")
+            RequiredKillSwitch = "ENABLE_EPG_RETENTION_APPLY"
+        },
+        @{
             Name = "run_provider_snapshot_import_decision_gate"
             Path = "tools\workers\run_provider_snapshot_import_decision_gate.ps1"
             Recurring = $false
@@ -1001,6 +1008,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 

@@ -204,3 +204,4 @@
 "epg_server_import_queue_completed","P0.5","epg_refresh","EPG Refresh","EPG Refresh","","","","epg_refresh","","",""
 "epg_pipeline_completed","P0.5","epg_refresh","EPG Refresh","EPG Refresh","","","","epg_refresh","","",""
 "epg_retention_preview_completed","P0.5","epg_refresh","EPG Refresh","EPG Refresh","","","","epg_refresh","","",""
+"epg_retention_apply_completed","P0.5","epg_refresh","EPG Refresh","EPG Refresh","","","","epg_refresh","","",""
