@@ -517,6 +517,41 @@ try {
             RequiredKillSwitch = "ENABLE_LIVE_STREAMS_DELTA_LIMITED_APPLY"
         },
         @{
+            Name = "pull_epg_xml"
+            Path = "tools\workers\pull_epg_xml.ps1"
+            Recurring = $false
+            RequiredSignals = @("epg_xml_pull_completed")
+            RequiredKillSwitch = "ENABLE_EPG_XML_PULL"
+        },
+        @{
+            Name = "upload_epg_xml_to_server"
+            Path = "tools\workers\upload_epg_xml_to_server.ps1"
+            Recurring = $false
+            RequiredSignals = @("epg_xml_upload_completed")
+            RequiredKillSwitch = "ENABLE_EPG_XML_UPLOAD"
+        },
+        @{
+            Name = "run_epg_server_import_queue"
+            Path = "tools\workers\run_epg_server_import_queue.ps1"
+            Recurring = $false
+            RequiredSignals = @("epg_server_import_queue_completed")
+            RequiredKillSwitch = "ENABLE_EPG_SERVER_IMPORT_QUEUE"
+        },
+        @{
+            Name = "run_epg_pipeline"
+            Path = "tools\workers\run_epg_pipeline.ps1"
+            Recurring = $false
+            RequiredSignals = @("epg_pipeline_completed")
+            RequiredKillSwitch = "ENABLE_EPG_PIPELINE"
+        },
+        @{
+            Name = "register_governed_epg_pipeline"
+            Path = "tools\workers\register_governed_epg_pipeline.ps1"
+            Recurring = $false
+            RequiredSignals = @()
+            RequiredKillSwitch = ""
+        },
+        @{
             Name = "run_provider_snapshot_import_decision_gate"
             Path = "tools\workers\run_provider_snapshot_import_decision_gate.ps1"
             Recurring = $false
@@ -960,6 +995,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 

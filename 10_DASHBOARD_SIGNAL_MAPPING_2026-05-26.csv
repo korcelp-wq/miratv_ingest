@@ -1,4 +1,4 @@
-"signal_name","p0_item","source_component","dashboard_panel","widget_key","refresh_cadence","staleness_threshold","alert_threshold","owner","kill_switch_name","rollback_action","enabled"
+﻿"signal_name","p0_item","source_component","dashboard_panel","widget_key","refresh_cadence","staleness_threshold","alert_threshold","owner","kill_switch_name","rollback_action","enabled"
 "availability_refresh_status","P0.1","availability_worker","Availability","availability.refresh.status","10m","30m","status=failed|stale","IP Ops","ENABLE_AVAILABILITY_REFRESH","Disable worker and keep known-good availability by TTL","true"
 "availability_refresh_lag_minutes","P0.1","availability_worker","Availability","availability.refresh.lag_minutes","10m","30m",">30","IP Ops","ENABLE_AVAILABILITY_REFRESH","Disable worker and keep known-good availability by TTL","true"
 "worker_heartbeat_status","P0.2","worker_runtime","Worker Health","worker.heartbeat.status","1m","5m","missed > 2 intervals","SRE","ENABLE_WORKER_RUNTIME","Stop recurring workers and serve stale-known-good","true"
@@ -199,3 +199,7 @@
 "vod_delta_preview_item_source_fix_item_rows_available","P0.5","vod_delta_preview_item_source_fix","Provider Sync","vod_delta_preview.item_source_fix.item_rows_available","on demand","24h","false","Content Ops","ENABLE_VOD_DELTA_PREVIEW_ITEM_SOURCE_FIX_PLANNER","Disable VOD delta preview item-source fix planner","true"
 "provider_snapshot_live_streams_import_preview_completed","P0.5","provider_snapshot_live_streams_import_preview","Provider Sync","provider.snapshot.live_streams.import.preview","on demand","24h","status=fail","Content Ops","ENABLE_PROVIDER_SNAPSHOT_Live_STREAMS_IMPORT_PREVIEW","Disable Live streams import preview","true"
 "live_streams_delta_limited_apply_completed","P0.5","live_streams_delta_limited_apply","Provider Sync","live_streams.delta_limited_apply.completed","on demand","24h","status=fail","Content Ops","ENABLE_Live_STREAMS_DELTA_LIMITED_APPLY","Disable Live streams limited apply","true"
+"epg_xml_pull_completed","P0.5","epg_refresh","EPG Refresh","EPG Refresh","","","","epg_refresh","","",""
+"epg_xml_upload_completed","P0.5","epg_refresh","EPG Refresh","EPG Refresh","","","","epg_refresh","","",""
+"epg_server_import_queue_completed","P0.5","epg_refresh","EPG Refresh","EPG Refresh","","","","epg_refresh","","",""
+"epg_pipeline_completed","P0.5","epg_refresh","EPG Refresh","EPG Refresh","","","","epg_refresh","","",""

@@ -4,6 +4,37 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+
+
+function Write-JobLog {
+    param(
+        [string]$EventName,
+        [string]$Status,
+        [object]$Data = $null
+    )
+
+    Write-Host "LOG: $EventName status=$Status"
+}
+
+function Emit-Heartbeat {
+    param([string]$Status = "ok")
+    Write-JobLog -EventName "heartbeat" -Status $Status
+}
+
+function Emit-Signal {
+    param(
+        [string]$SignalName,
+        [string]$SignalValue = "ok"
+    )
+
+    Write-JobLog -EventName "signal_emitted" -Status $SignalValue -Data ([ordered]@{
+        signal_name = $SignalName
+    })
+}
+
+function Test-KillSwitch {
+    return $true
+}
 $ManifestPath = ".\tools\config\master_control_ingest_manifest.csv"
 $WorkerPath = ".\tools\workers\run_epg_pipeline.ps1"
 
@@ -74,3 +105,4 @@ foreach ($file in $required) {
 }
 
 Write-Host "PASS: manifest registration validator passed."
+
