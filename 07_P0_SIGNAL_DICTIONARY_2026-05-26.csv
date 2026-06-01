@@ -206,3 +206,4 @@
 "epg_retention_preview_completed","P0.5","EPG retention preview completed.","completion","","epg_refresh","","EPG Refresh","","","","epg_refresh",""
 "epg_retention_apply_completed","P0.5","EPG retention apply completed.","completion","","epg_refresh","","EPG Refresh","","","","epg_refresh",""
 "series_top_level_delta_plan_completed","P0.5","Series top-level delta plan completed.","completion","","series_ingest","","Series Ingest","","","","series_ingest",""
+"series_top_level_delta_preview_completed","P0.5","Series top-level delta preview completed.","completion","","series_ingest","","Series Ingest","","","","series_ingest",""

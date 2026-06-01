@@ -391,6 +391,13 @@ try {
             RequiredKillSwitch = "ENABLE_SERIES_TOP_LEVEL_DELTA_PLAN"
         },
         @{
+            Name = "preview_series_top_level_delta"
+            Path = "tools\workers\preview_series_top_level_delta.ps1"
+            Recurring = $false
+            RequiredSignals = @("series_top_level_delta_preview_completed")
+            RequiredKillSwitch = "ENABLE_SERIES_TOP_LEVEL_DELTA_PREVIEW"
+        },
+        @{
             Name = "plan_provider_snapshot_delta"
             Path = "tools\workers\plan_provider_snapshot_delta.ps1"
             Recurring = $false
@@ -1015,6 +1022,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
