@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Build a governed Live categories provider snapshot for one MiraTV account.
 
@@ -486,7 +486,7 @@ try {
 
     $provider = $ProviderLabel.Trim()
     if ([string]::IsNullOrWhiteSpace($provider)) {
-        $provider = ""
+        $provider = "xtream"
     }
 
     $script:Stage = "kill_switch"
@@ -852,5 +852,4 @@ catch {
     Write-Error "FAILED: provider live categories snapshot failed. run_id=$script:RunId $errorMessage"
     exit 1
 }
-
 
