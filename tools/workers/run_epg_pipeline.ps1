@@ -15,7 +15,14 @@ param(
     [string]$Provider = "default",
     [int]$ImportLimit = 5000,
     [int]$MaxImportRuns = 200,
-    [switch]$ResetImport
+    [switch]$ResetImport,
+    [int]$RetentionHours = 48,
+    [string]$RetentionCutoffMode = "db_now",
+    [int]$RetentionBatchSize = 5000,
+    [int]$RetentionMaxBatches = 20,
+    [switch]$ApplyRetention,
+    [switch]$AllowRetentionDbWrite,
+    [string]$RetentionWriteAuthorizationCode = ""
 )
 
 Set-StrictMode -Version Latest
@@ -97,12 +104,29 @@ function Invoke-Step {
         step_name = $StepName
     })
 
-    & $Command
+    $global:LASTEXITCODE = 0
 
-    Write-JobLog -EventName "step_completed" -Status "pass" -Data ([ordered]@{
-        step_name = $StepName
-        duration_ms = Get-DurationMs -Start $stepStart
-    })
+    try {
+        & $Command
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "Step '$StepName' failed with exit code $LASTEXITCODE."
+        }
+
+        Write-JobLog -EventName "step_completed" -Status "pass" -Data ([ordered]@{
+            step_name = $StepName
+            duration_ms = Get-DurationMs -Start $stepStart
+        })
+    }
+    catch {
+        Write-JobLog -EventName "step_failed" -Status "failed" -Data ([ordered]@{
+            step_name = $StepName
+            duration_ms = Get-DurationMs -Start $stepStart
+            error_message = $_.Exception.Message
+        })
+
+        throw
+    }
 }
 
 try {
@@ -146,6 +170,43 @@ try {
             -MaxRuns $MaxImportRuns `
             @resetArgs
     }
+    Invoke-Step -StepName "preview_epg_retention" -Command {
+        pwsh -NoProfile -ExecutionPolicy Bypass `
+            -File ".\tools\workers\preview_epg_retention.ps1" `
+            -Environment $Environment `
+            -Provider $Provider `
+            -RetentionHours $RetentionHours `
+            -CutoffMode $RetentionCutoffMode
+    }
+
+    Invoke-Step -StepName "apply_epg_retention" -Command {
+        $retentionArgs = @(
+            "-NoProfile",
+            "-ExecutionPolicy", "Bypass",
+            "-File", ".\tools\workers\apply_epg_retention.ps1",
+            "-Environment", $Environment,
+            "-Provider", $Provider,
+            "-RetentionHours", $RetentionHours,
+            "-CutoffMode", $RetentionCutoffMode,
+            "-BatchSize", $RetentionBatchSize,
+            "-MaxBatches", $RetentionMaxBatches
+        )
+
+        if ($ApplyRetention) {
+            $retentionArgs += "-Apply"
+        }
+
+        if ($AllowRetentionDbWrite) {
+            $retentionArgs += "-AllowDbWrite"
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($RetentionWriteAuthorizationCode)) {
+            $retentionArgs += @("-WriteAuthorizationCode", $RetentionWriteAuthorizationCode)
+        }
+
+        pwsh @retentionArgs
+    }
+
 
     $summary = [pscustomobject][ordered]@{
         run_id = $RunId
@@ -167,6 +228,43 @@ try {
     Write-Output "OK: EPG pipeline completed. summary=$SummaryPath"
 }
 catch {
+    Invoke-Step -StepName "preview_epg_retention" -Command {
+        pwsh -NoProfile -ExecutionPolicy Bypass `
+            -File ".\tools\workers\preview_epg_retention.ps1" `
+            -Environment $Environment `
+            -Provider $Provider `
+            -RetentionHours $RetentionHours `
+            -CutoffMode $RetentionCutoffMode
+    }
+
+    Invoke-Step -StepName "apply_epg_retention" -Command {
+        $retentionArgs = @(
+            "-NoProfile",
+            "-ExecutionPolicy", "Bypass",
+            "-File", ".\tools\workers\apply_epg_retention.ps1",
+            "-Environment", $Environment,
+            "-Provider", $Provider,
+            "-RetentionHours", $RetentionHours,
+            "-CutoffMode", $RetentionCutoffMode,
+            "-BatchSize", $RetentionBatchSize,
+            "-MaxBatches", $RetentionMaxBatches
+        )
+
+        if ($ApplyRetention) {
+            $retentionArgs += "-Apply"
+        }
+
+        if ($AllowRetentionDbWrite) {
+            $retentionArgs += "-AllowDbWrite"
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($RetentionWriteAuthorizationCode)) {
+            $retentionArgs += @("-WriteAuthorizationCode", $RetentionWriteAuthorizationCode)
+        }
+
+        pwsh @retentionArgs
+    }
+
     $summary = [pscustomobject][ordered]@{
         run_id = $RunId
         worker_name = $WorkerName
@@ -187,3 +285,4 @@ catch {
 
     throw
 }
+
