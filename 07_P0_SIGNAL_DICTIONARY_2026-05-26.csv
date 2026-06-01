@@ -203,3 +203,4 @@
 "epg_xml_upload_completed","P0.5","EPG XML upload worker completed.","completion","","epg_refresh","","EPG Refresh","","","","epg_refresh",""
 "epg_server_import_queue_completed","P0.5","EPG server import queue worker completed.","completion","","epg_refresh","","EPG Refresh","","","","epg_refresh",""
 "epg_pipeline_completed","P0.5","Governed EPG pipeline completed.","completion","","epg_refresh","","EPG Refresh","","","","epg_refresh",""
+"epg_retention_preview_completed","P0.5","EPG retention preview completed.","completion","","epg_refresh","","EPG Refresh","","","","epg_refresh",""
