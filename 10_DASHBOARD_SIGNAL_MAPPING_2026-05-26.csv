@@ -205,3 +205,4 @@
 "epg_pipeline_completed","P0.5","epg_refresh","EPG Refresh","EPG Refresh","","","","epg_refresh","","",""
 "epg_retention_preview_completed","P0.5","epg_refresh","EPG Refresh","EPG Refresh","","","","epg_refresh","","",""
 "epg_retention_apply_completed","P0.5","epg_refresh","EPG Refresh","EPG Refresh","","","","epg_refresh","","",""
+"series_top_level_delta_plan_completed","P0.5","series_ingest","Series Ingest","Series Ingest","","","","series_ingest","","",""
