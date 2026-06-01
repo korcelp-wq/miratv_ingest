@@ -545,13 +545,6 @@ try {
             RequiredKillSwitch = "ENABLE_EPG_PIPELINE"
         },
         @{
-            Name = "register_governed_epg_pipeline"
-            Path = "tools\workers\register_governed_epg_pipeline.ps1"
-            Recurring = $false
-            RequiredSignals = @()
-            RequiredKillSwitch = ""
-        },
-        @{
             Name = "run_provider_snapshot_import_decision_gate"
             Path = "tools\workers\run_provider_snapshot_import_decision_gate.ps1"
             Recurring = $false
@@ -727,7 +720,6 @@ try {
             RequiredKillSwitch = "ENABLE_GRINDER_DISPOSITION_CONTRACT_CHECK"
         }
     )
-
     $helperSubcomponents = @(
         @{
             ParentUnit = "capture_series_frame_artwork"
@@ -756,6 +748,13 @@ try {
             Path = "tools\common\SupportCasePreview.psm1"
             Subcomponent = "support_case_preview"
             Purpose = "support_playback_cases preview payload shaping without writes"
+        },
+        @{
+            ParentUnit = "run_epg_pipeline"
+            HelperName = "register_governed_epg_pipeline"
+            Path = "tools\workers\register_governed_epg_pipeline.ps1"
+            Subcomponent = "epg_pipeline_registration_helper"
+            Purpose = "registration helper that wires governed EPG pipeline into manifest and registry"
         }
     )
 
@@ -995,6 +994,8 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
+
 
 
 
