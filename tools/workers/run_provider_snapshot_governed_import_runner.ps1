@@ -10,6 +10,12 @@
     2. select_next_provider_snapshot_import_candidate.ps1
     3. run_provider_snapshot_import_decision_gate.ps1
 
+  Master Control DB path:
+    - writes direct DB logging rows to:
+        xpdgxfsp_content.mc_provider_snapshot_governed_import_runner_summary
+        xpdgxfsp_content.mc_provider_snapshot_governed_import_runner
+    - keeps existing CSV/JSON outputs as debug/fallback artifacts.
+
   It preserves the existing safety model:
     - No provider calls except through the governed refresh gate.
     - No DB writes unless -Apply is explicitly passed and downstream gates allow it.
@@ -205,6 +211,153 @@ function Get-IntValue {
     return $Default
 }
 
+
+function ConvertTo-HashtableLocal {
+    param([Parameter(Mandatory = $true)][object]$Object)
+
+    $hash = @{}
+    foreach ($property in $Object.PSObject.Properties) {
+        $hash[$property.Name] = $property.Value
+    }
+    return $hash
+}
+
+function Get-FileMetaLocal {
+    param(
+        [string]$Path,
+        [string]$Pattern
+    )
+
+    $sha = ""
+    $lastWriteUtc = ""
+
+    if (-not [string]::IsNullOrWhiteSpace($Path) -and (Test-Path -LiteralPath $Path)) {
+        try { $sha = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash } catch { $sha = "" }
+        try { $lastWriteUtc = (Get-Item -LiteralPath $Path).LastWriteTimeUtc.ToString("o") } catch { $lastWriteUtc = "" }
+    }
+
+    if (Get-Command New-McSourceMeta -ErrorAction SilentlyContinue) {
+        return New-McSourceMeta `
+            -SourceFilePath $Path `
+            -SourceFilePattern $Pattern `
+            -SourceFileSha256 $sha `
+            -SourceFileLastWriteUtc $lastWriteUtc
+    }
+
+    $sourceFileName = ""
+    if (-not [string]::IsNullOrWhiteSpace($Path)) {
+        try { $sourceFileName = Split-Path -Path $Path -Leaf } catch { $sourceFileName = "" }
+    }
+
+    return [ordered]@{
+        source_file_path = $Path
+        source_file_name = $sourceFileName
+        source_file_pattern = $Pattern
+        source_file_sha256 = $sha
+        source_file_last_write_utc = $lastWriteUtc
+    }
+}
+
+function Initialize-MasterControlDbLocal {
+    param([string]$RepoRoot)
+
+    $result = [ordered]@{
+        available = $false
+        error = ""
+    }
+
+    try {
+        $dbQueryModule = Join-Path $RepoRoot "tools\common\DbQuery.psm1"
+        if (-not (Test-Path -LiteralPath $dbQueryModule)) {
+            throw "DbQuery module not found: $dbQueryModule"
+        }
+
+        Import-Module $dbQueryModule -Force -ErrorAction Stop
+
+        $mcDbModule = Join-Path $RepoRoot "tools\common\MasterControlDb.psm1"
+        if (-not (Test-Path -LiteralPath $mcDbModule)) {
+            throw "MasterControlDb module not found: $mcDbModule"
+        }
+
+        Import-Module $mcDbModule -Force -ErrorAction Stop
+
+        $required = @(
+            "Write-McProviderSnapshotGovernedImportRunnerSummary",
+            "Write-McProviderSnapshotGovernedImportRunnerRow"
+        )
+
+        foreach ($commandName in $required) {
+            if (-not (Get-Command $commandName -ErrorAction SilentlyContinue)) {
+                throw "Required command missing: $commandName"
+            }
+        }
+
+        $result.available = $true
+    }
+    catch {
+        $result.available = $false
+        $result.error = $_.Exception.Message
+    }
+
+    return [pscustomobject]$result
+}
+
+function Write-MasterControlGovernedRunnerLocal {
+    param(
+        [bool]$McDbAvailable,
+        [object]$Summary,
+        [object]$RunnerRow,
+        [string]$ReportCsv,
+        [string]$SummaryJson
+    )
+
+    $writeResult = [ordered]@{
+        available = $McDbAvailable
+        attempted = $false
+        summary_written = $false
+        detail_written = $false
+        error = ""
+    }
+
+    if (-not $McDbAvailable) {
+        return [pscustomobject]$writeResult
+    }
+
+    try {
+        $writeResult.attempted = $true
+
+        $summaryHash = ConvertTo-HashtableLocal -Object $Summary
+        $summarySource = Get-FileMetaLocal `
+            -Path $SummaryJson `
+            -Pattern "provider_snapshot_governed_import_runner_summary_TIMESTAMP.json"
+
+        Write-McProviderSnapshotGovernedImportRunnerSummary `
+            -Summary $summaryHash `
+            -SourceMeta $summarySource | Out-Null
+
+        $writeResult.summary_written = $true
+
+        $rowHash = ConvertTo-HashtableLocal -Object $RunnerRow
+        $rowSource = Get-FileMetaLocal `
+            -Path $ReportCsv `
+            -Pattern "provider_snapshot_governed_import_runner_TIMESTAMP.csv"
+
+        Write-McProviderSnapshotGovernedImportRunnerRow `
+            -RunnerRow $rowHash `
+            -SourceMeta $rowSource | Out-Null
+
+        $writeResult.detail_written = $true
+    }
+    catch {
+        $writeResult.error = $_.Exception.Message
+    }
+
+    return [pscustomobject]$writeResult
+}
+
+
+$mcDb = Initialize-MasterControlDbLocal -RepoRoot $RepoRoot
+
 try {
     if ($Limit -lt 1) { $Limit = 1 }
     if ($Limit -gt 100) { $Limit = 100 }
@@ -217,6 +370,8 @@ try {
         mac_user_id = $MacUserId
         provider_label = $ProviderLabel
         limit = $Limit
+        mc_db_available = [bool]$mcDb.available
+        mc_db_error = [string]$mcDb.error
     })
 
     Emit-LocalHeartbeat -Status "running"
@@ -360,6 +515,21 @@ try {
 
     $summary | ConvertTo-Json -Depth 20 | Set-Content -Path $summaryJson -Encoding UTF8
 
+    $mcWrite = Write-MasterControlGovernedRunnerLocal `
+        -McDbAvailable ([bool]$mcDb.available) `
+        -Summary ([pscustomobject]$summary) `
+        -RunnerRow $row `
+        -ReportCsv $reportCsv `
+        -SummaryJson $summaryJson
+
+    $summary["mc_db_available"] = [bool]$mcDb.available
+    $summary["mc_db_attempted"] = [bool]$mcWrite.attempted
+    $summary["mc_db_summary_written"] = [bool]$mcWrite.summary_written
+    $summary["mc_db_detail_written"] = [bool]$mcWrite.detail_written
+    $summary["mc_db_error"] = [string]$mcWrite.error
+
+    $summary | ConvertTo-Json -Depth 20 | Set-Content -Path $summaryJson -Encoding UTF8
+
     Emit-LocalSignal -SignalName $CompletedSignal -SignalValue $status -Payload $summary
     Emit-LocalSignal -SignalName $DispositionSignal -SignalValue $finalDisposition -Payload ([ordered]@{ run_id = $RunId })
     Emit-LocalSignal -SignalName $SelectedLaneSignal -SignalValue $selectedLane -Payload ([ordered]@{ run_id = $RunId })
@@ -369,7 +539,7 @@ try {
     Write-LocalJsonLog -EventName "job_completed" -Status $status -Data $summary
 
     if (-not $Quiet) {
-        Write-Output "OK: provider snapshot governed import runner completed. status=$status disposition=$finalDisposition selected_lane=$selectedLane dry_run=$dryRun db_writes=$dbWrites actual_write=$actualWriteCount provider_calls=True run_id=$RunId"
+        Write-Output "OK: provider snapshot governed import runner completed. status=$status disposition=$finalDisposition selected_lane=$selectedLane dry_run=$dryRun db_writes=$dbWrites actual_write=$actualWriteCount provider_calls=True mc_db_available=$($mcDb.available) mc_db_attempted=$($mcWrite.attempted) mc_db_summary_written=$($mcWrite.summary_written) mc_db_detail_written=$($mcWrite.detail_written) run_id=$RunId"
         Write-Output "FILES: report_csv=$reportCsv report_json=$reportJson steps_csv=$stepsCsv summary_json=$summaryJson"
         Import-Csv $reportCsv | Format-List
     }
@@ -389,6 +559,8 @@ catch {
         Write-LocalJsonLog -EventName "job_failed" -Status "failed" -Data ([ordered]@{
             error_message = $message
             duration_ms = Get-DurationMs -Start $StartedAt
+            mc_db_available = if ($null -ne $mcDb) { [bool]$mcDb.available } else { $false }
+            mc_db_error = if ($null -ne $mcDb) { [string]$mcDb.error } else { "" }
         })
     }
     catch {}
