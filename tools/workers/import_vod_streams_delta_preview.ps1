@@ -1,4 +1,4 @@
-﻿<#
+<#
 .CONTRACT-SIGNALS
   provider_snapshot_vod_streams_import_preview_completed
   vod_streams_delta_import_preview_disposition
@@ -17,7 +17,7 @@
   It emits one preview CSV row per item-level VOD stream record, bounded by -Limit.
 
   It does not call providers.
-  It does not read DB.
+  It reads DB to exclude VOD rows already imported into xpdgxfsp_content.vod.
   It does not write DB.
   It does not mutate snapshots.
 
@@ -57,6 +57,12 @@ $LogRoot = Join-Path $RepoRoot "runtime\logs\vod_streams_delta_import_preview"
 
 New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $LogRoot | Out-Null
+
+$DbQueryModule = Join-Path $RepoRoot "tools\common\DbQuery.psm1"
+if (-not (Test-Path -LiteralPath $DbQueryModule)) {
+    throw "Required DB query module not found: $DbQueryModule"
+}
+Import-Module $DbQueryModule -Force
 
 function Get-DurationMs {
     param([datetime]$Start)
@@ -315,6 +321,67 @@ function Get-ProviderLabelFromSnapshotPath {
     return ""
 }
 
+function ConvertTo-SqlLiteralLocal {
+    param([string]$Value)
+
+    if ($null -eq $Value) {
+        return "NULL"
+    }
+
+    return "'" + ([string]$Value).Replace("'", "''") + "'"
+}
+
+function Get-ExistingVodProviderVodIdSet {
+    param(
+        [string]$ProviderLabel,
+        [string[]]$ProviderVodIds
+    )
+
+    $set = @{}
+
+    if ([string]::IsNullOrWhiteSpace($ProviderLabel)) {
+        throw "Provider label is required before checking existing VOD rows."
+    }
+
+    $ids = @(
+        $ProviderVodIds |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { [string]$_ } |
+            Sort-Object -Unique
+    )
+
+    if (@($ids).Count -eq 0) {
+        return $set
+    }
+
+    $providerSql = ConvertTo-SqlLiteralLocal -Value $ProviderLabel
+    $chunkSize = 500
+
+    for ($i = 0; $i -lt $ids.Count; $i += $chunkSize) {
+        $end = [Math]::Min($i + $chunkSize - 1, $ids.Count - 1)
+        $chunk = @($ids[$i..$end])
+        $idList = ($chunk | ForEach-Object { ConvertTo-SqlLiteralLocal -Value $_ }) -join ","
+
+        $sql = @"
+SELECT provider_vod_id
+FROM xpdgxfsp_content.vod
+WHERE provider = $providerSql
+  AND provider_vod_id IN ($idList);
+"@
+
+        $result = Invoke-DogOpenProc -DatabaseKey "content" -Sql $sql -TimeoutSec 120
+
+        foreach ($row in @($result.rows)) {
+            $existingId = Get-Text -Object $row -Name "provider_vod_id" -Default ""
+            if (-not [string]::IsNullOrWhiteSpace($existingId)) {
+                $set[$existingId] = $true
+            }
+        }
+    }
+
+    return $set
+}
+
 function Convert-VodItemToPreviewRow {
     param(
         [object]$Item,
@@ -380,7 +447,7 @@ function Convert-VodItemToPreviewRow {
         source_dryrun_csv = $SourceDryrunCsv
         preview_only = $true
         dry_run = $true
-        db_reads = $false
+        db_reads = $true
         db_writes = $false
         provider_calls = $false
     }
@@ -394,7 +461,7 @@ try {
         limit = $Limit
         preview_only = $true
         dry_run = $true
-        db_reads = $false
+        db_reads = $true
         db_writes = $false
         provider_calls = $false
     })
@@ -409,7 +476,7 @@ try {
             disposition = "disabled_by_kill_switch"
             preview_only = $true
             dry_run = $true
-            db_reads = $false
+            db_reads = $true
             db_writes = $false
             provider_calls = $false
         }
@@ -435,16 +502,43 @@ try {
         throw "Resolved source_snapshot has no item rows: $sourceSnapshot"
     }
 
+    $providerLabelFromSnapshot = Get-ProviderLabelFromSnapshotPath -Path $sourceSnapshot
+    if ([string]::IsNullOrWhiteSpace($providerLabelFromSnapshot)) {
+        $providerLabelFromSnapshot = "unknown"
+    }
+
+    $candidateProviderVodIds = @(
+        foreach ($item in $items) {
+            Get-Field -Row $item -Names @("provider_stream_id", "stream_id", "id")
+        }
+    )
+
+    $existingVodIds = Get-ExistingVodProviderVodIdSet `
+        -ProviderLabel $providerLabelFromSnapshot `
+        -ProviderVodIds $candidateProviderVodIds
+
     $previewRows = @()
     $rowNumber = 0
+    $skippedAlreadyImportedCount = 0
 
-    foreach ($item in ($items | Select-Object -First $Limit)) {
+    foreach ($item in $items) {
+        $candidateProviderStreamId = Get-Field -Row $item -Names @("provider_stream_id", "stream_id", "id")
+
+        if (-not [string]::IsNullOrWhiteSpace($candidateProviderStreamId) -and $existingVodIds.ContainsKey($candidateProviderStreamId)) {
+            $skippedAlreadyImportedCount++
+            continue
+        }
+
         $rowNumber++
         $previewRows += Convert-VodItemToPreviewRow `
             -Item $item `
             -RowNumber $rowNumber `
             -SourceSnapshot $sourceSnapshot `
             -SourceDryrunCsv $sourceDryrunCsv
+
+        if (@($previewRows).Count -ge $Limit) {
+            break
+        }
     }
 
     $plannedImportCount = @($previewRows | Where-Object { $_.row_disposition -eq "planned_import" }).Count
@@ -476,7 +570,7 @@ try {
         environment = $Environment
         preview_only = $true
         dry_run = $true
-        db_reads = $false
+        db_reads = $true
         db_writes = $false
         provider_calls = $false
         lane_key = "vod_streams"
@@ -485,6 +579,7 @@ try {
         source_dryrun_csv = $sourceDryrunCsv
         source_dryrun_summary = $sourceDryrunSummary
         source_row_count = @($items).Count
+        skipped_already_imported_count = $skippedAlreadyImportedCount
         limit = $Limit
         total_rows = @($previewRows).Count
         planned_import_count = $plannedImportCount
@@ -510,7 +605,7 @@ try {
     Write-LocalJsonLog -EventName "job_completed" -Status $status -Data $summary
 
     if (-not $Quiet) {
-        Write-Output "OK: VOD streams delta item preview completed. status=$status disposition=$disposition source_rows=$(@($items).Count) emitted=$(@($previewRows).Count) planned_import=$plannedImportCount incomplete=$incompleteCount db_reads=False db_writes=False provider_calls=False run_id=$RunId"
+        Write-Output "OK: VOD streams delta item preview completed. status=$status disposition=$disposition source_rows=$(@($items).Count) emitted=$(@($previewRows).Count) planned_import=$plannedImportCount incomplete=$incompleteCount db_reads=True db_writes=False provider_calls=False skipped_already_imported=$skippedAlreadyImportedCount run_id=$RunId"
         Write-Output "FILES: output_csv=$outputCsv output_json=$outputJson summary_json=$summaryJson"
         $previewRows | Select-Object -First 25 | Format-Table -AutoSize
     }
