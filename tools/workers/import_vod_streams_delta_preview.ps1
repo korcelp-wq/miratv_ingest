@@ -16,6 +16,12 @@
 
   It emits one preview CSV row per item-level VOD stream record, bounded by -Limit.
 
+  Master Control DB path:
+    - writes direct DB logging rows to:
+        xpdgxfsp_content.mc_vod_streams_delta_import_preview_summary
+        xpdgxfsp_content.mc_vod_streams_delta_import_preview
+    - keeps existing CSV/JSON outputs as debug/fallback artifacts.
+
   It does not call providers.
   It reads DB to exclude VOD rows already imported into xpdgxfsp_content.vod.
   It does not write DB.
@@ -64,9 +70,150 @@ if (-not (Test-Path -LiteralPath $DbQueryModule)) {
 }
 Import-Module $DbQueryModule -Force
 
+
 function Get-DurationMs {
     param([datetime]$Start)
     return [int][Math]::Round(((Get-Date) - $Start).TotalMilliseconds)
+}
+
+
+function ConvertTo-HashtableLocal {
+    param([Parameter(Mandatory = $true)][object]$Object)
+
+    $hash = @{}
+    foreach ($property in $Object.PSObject.Properties) {
+        $hash[$property.Name] = $property.Value
+    }
+    return $hash
+}
+
+function Get-FileMetaLocal {
+    param(
+        [string]$Path,
+        [string]$Pattern
+    )
+
+    $sha = ""
+    $lastWriteUtc = ""
+
+    if (-not [string]::IsNullOrWhiteSpace($Path) -and (Test-Path -LiteralPath $Path)) {
+        try { $sha = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash } catch { $sha = "" }
+        try { $lastWriteUtc = (Get-Item -LiteralPath $Path).LastWriteTimeUtc.ToString("o") } catch { $lastWriteUtc = "" }
+    }
+
+    if (Get-Command New-McSourceMeta -ErrorAction SilentlyContinue) {
+        return New-McSourceMeta `
+            -SourceFilePath $Path `
+            -SourceFilePattern $Pattern `
+            -SourceFileSha256 $sha `
+            -SourceFileLastWriteUtc $lastWriteUtc
+    }
+
+    $sourceFileName = ""
+    if (-not [string]::IsNullOrWhiteSpace($Path)) {
+        try { $sourceFileName = Split-Path -Path $Path -Leaf } catch { $sourceFileName = "" }
+    }
+
+    return [ordered]@{
+        source_file_path = $Path
+        source_file_name = $sourceFileName
+        source_file_pattern = $Pattern
+        source_file_sha256 = $sha
+        source_file_last_write_utc = $lastWriteUtc
+    }
+}
+
+function Initialize-MasterControlDbLocal {
+    param([string]$RepoRoot)
+
+    $result = [ordered]@{
+        available = $false
+        error = ""
+    }
+
+    try {
+        $mcDbModule = Join-Path $RepoRoot "tools\common\MasterControlDb.psm1"
+        if (-not (Test-Path -LiteralPath $mcDbModule)) {
+            throw "MasterControlDb module not found: $mcDbModule"
+        }
+
+        Import-Module $mcDbModule -Force -ErrorAction Stop
+
+        $required = @(
+            "Write-McVodStreamsDeltaImportPreviewSummary",
+            "Write-McVodStreamsDeltaImportPreviewRow"
+        )
+
+        foreach ($commandName in $required) {
+            if (-not (Get-Command $commandName -ErrorAction SilentlyContinue)) {
+                throw "Required command missing: $commandName"
+            }
+        }
+
+        $result.available = $true
+    }
+    catch {
+        $result.available = $false
+        $result.error = $_.Exception.Message
+    }
+
+    return [pscustomobject]$result
+}
+
+function Write-MasterControlVodPreviewLocal {
+    param(
+        [bool]$McDbAvailable,
+        [object]$Summary,
+        [object[]]$PreviewRows,
+        [string]$OutputCsv,
+        [string]$SummaryJson
+    )
+
+    $writeResult = [ordered]@{
+        available = $McDbAvailable
+        attempted = $false
+        summary_written = $false
+        detail_written_count = 0
+        error = ""
+    }
+
+    if (-not $McDbAvailable) {
+        return [pscustomobject]$writeResult
+    }
+
+    try {
+        $writeResult.attempted = $true
+
+        $summaryHash = ConvertTo-HashtableLocal -Object $Summary
+        $summarySource = Get-FileMetaLocal `
+            -Path $SummaryJson `
+            -Pattern "vod_streams_delta_import_preview_summary_TIMESTAMP.json"
+
+        Write-McVodStreamsDeltaImportPreviewSummary `
+            -Summary $summaryHash `
+            -SourceMeta $summarySource | Out-Null
+
+        $writeResult.summary_written = $true
+
+        $detailSource = Get-FileMetaLocal `
+            -Path $OutputCsv `
+            -Pattern "vod_streams_delta_import_preview_TIMESTAMP.csv"
+
+        foreach ($row in $PreviewRows) {
+            $rowHash = ConvertTo-HashtableLocal -Object $row
+
+            Write-McVodStreamsDeltaImportPreviewRow `
+                -PreviewRow $rowHash `
+                -SourceMeta $detailSource | Out-Null
+
+            $writeResult.detail_written_count++
+        }
+    }
+    catch {
+        $writeResult.error = $_.Exception.Message
+    }
+
+    return [pscustomobject]$writeResult
 }
 
 function Write-LocalJsonLog {
@@ -453,6 +600,8 @@ function Convert-VodItemToPreviewRow {
     }
 }
 
+$mcDb = Initialize-MasterControlDbLocal -RepoRoot $RepoRoot
+
 try {
     if ($Limit -lt 1) { $Limit = 1 }
     if ($Limit -gt 5000) { $Limit = 5000 }
@@ -464,6 +613,8 @@ try {
         db_reads = $true
         db_writes = $false
         provider_calls = $false
+        mc_db_available = [bool]$mcDb.available
+        mc_db_error = [string]$mcDb.error
     })
 
     Emit-LocalHeartbeat -Status "running"
@@ -596,6 +747,21 @@ try {
 
     $summary | ConvertTo-Json -Depth 30 | Set-Content -Path $summaryJson -Encoding UTF8
 
+    $mcWrite = Write-MasterControlVodPreviewLocal `
+        -McDbAvailable ([bool]$mcDb.available) `
+        -Summary ([pscustomobject]$summary) `
+        -PreviewRows @($previewRows) `
+        -OutputCsv $outputCsv `
+        -SummaryJson $summaryJson
+
+    $summary["mc_db_available"] = [bool]$mcDb.available
+    $summary["mc_db_attempted"] = [bool]$mcWrite.attempted
+    $summary["mc_db_summary_written"] = [bool]$mcWrite.summary_written
+    $summary["mc_db_detail_written_count"] = [int]$mcWrite.detail_written_count
+    $summary["mc_db_error"] = [string]$mcWrite.error
+
+    $summary | ConvertTo-Json -Depth 30 | Set-Content -Path $summaryJson -Encoding UTF8
+
     Emit-LocalSignal -SignalName $CompletedSignal -SignalValue $status -Payload $summary
     Emit-LocalSignal -SignalName $DispositionSignal -SignalValue $disposition -Payload ([ordered]@{ run_id = $RunId })
     Emit-LocalSignal -SignalName $PlannedImportCountSignal -SignalValue $plannedImportCount -Payload ([ordered]@{ run_id = $RunId })
@@ -605,7 +771,7 @@ try {
     Write-LocalJsonLog -EventName "job_completed" -Status $status -Data $summary
 
     if (-not $Quiet) {
-        Write-Output "OK: VOD streams delta item preview completed. status=$status disposition=$disposition source_rows=$(@($items).Count) emitted=$(@($previewRows).Count) planned_import=$plannedImportCount incomplete=$incompleteCount db_reads=True db_writes=False provider_calls=False skipped_already_imported=$skippedAlreadyImportedCount run_id=$RunId"
+        Write-Output "OK: VOD streams delta item preview completed. status=$status disposition=$disposition source_rows=$(@($items).Count) emitted=$(@($previewRows).Count) planned_import=$plannedImportCount incomplete=$incompleteCount db_reads=True db_writes=False provider_calls=False skipped_already_imported=$skippedAlreadyImportedCount mc_db_available=$($mcDb.available) mc_db_attempted=$($mcWrite.attempted) mc_db_summary_written=$($mcWrite.summary_written) mc_db_detail_written_count=$($mcWrite.detail_written_count) run_id=$RunId"
         Write-Output "FILES: output_csv=$outputCsv output_json=$outputJson summary_json=$summaryJson"
         $previewRows | Select-Object -First 25 | Format-Table -AutoSize
     }
@@ -625,6 +791,8 @@ catch {
         Write-LocalJsonLog -EventName "job_failed" -Status "failed" -Data ([ordered]@{
             error_message = $message
             duration_ms = Get-DurationMs -Start $StartedAt
+            mc_db_available = if ($null -ne $mcDb) { [bool]$mcDb.available } else { $false }
+            mc_db_error = if ($null -ne $mcDb) { [string]$mcDb.error } else { "" }
         })
     }
     catch {}
