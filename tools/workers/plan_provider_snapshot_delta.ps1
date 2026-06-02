@@ -7,10 +7,15 @@
     for categories and top-level inventory.
 
     It does not call provider APIs.
-    It does not import to database.
-    It does not write provider data.
-    It only reads runtime/reports/provider_*_snapshot summary files and emits a
+    It does not import provider data to the content database.
+    It reads runtime/reports/provider_*_snapshot summary files and emits a
     consolidated delta plan.
+
+    Master Control path:
+      - writes debug/fallback artifacts to runtime/reports/provider_snapshot_delta
+      - writes direct DB logging rows to:
+          xpdgxfsp_content.mc_provider_snapshot_delta_plan_summary
+          xpdgxfsp_content.mc_provider_snapshot_delta_plan
 
     Intended clean-repo location:
       tools\workers\plan_provider_snapshot_delta.ps1
@@ -108,6 +113,135 @@ function Read-JsonFileLocal {
     }
 }
 
+function ConvertTo-TinyIntLocal {
+    param([AllowNull()][object]$Value)
+
+    if ($null -eq $Value) {
+        return $null
+    }
+
+    if ($Value -is [bool]) {
+        if ($Value) { return 1 }
+        return 0
+    }
+
+    $text = ([string]$Value).Trim()
+    if ([string]::IsNullOrWhiteSpace($text)) {
+        return $null
+    }
+
+    if ($text -match '^(1|true|yes|y)$') {
+        return 1
+    }
+
+    if ($text -match '^(0|false|no|n)$') {
+        return 0
+    }
+
+    return $null
+}
+
+function ConvertTo-HashtableLocal {
+    param([Parameter(Mandatory = $true)][object]$Object)
+
+    $hash = @{}
+    foreach ($property in $Object.PSObject.Properties) {
+        $hash[$property.Name] = $property.Value
+    }
+    return $hash
+}
+
+function Get-FileMetaLocal {
+    param(
+        [string]$Path,
+        [string]$Pattern
+    )
+
+    $sha = ""
+    $lastWriteUtc = ""
+
+    if (-not [string]::IsNullOrWhiteSpace($Path) -and (Test-Path -LiteralPath $Path)) {
+        try {
+            $sha = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+        }
+        catch {
+            $sha = ""
+        }
+
+        try {
+            $lastWriteUtc = (Get-Item -LiteralPath $Path).LastWriteTimeUtc.ToString("o")
+        }
+        catch {
+            $lastWriteUtc = ""
+        }
+    }
+
+    if (Get-Command New-McSourceMeta -ErrorAction SilentlyContinue) {
+        return New-McSourceMeta `
+            -SourceFilePath $Path `
+            -SourceFilePattern $Pattern `
+            -SourceFileSha256 $sha `
+            -SourceFileLastWriteUtc $lastWriteUtc
+    }
+
+    $sourceFileName = ""
+    if (-not [string]::IsNullOrWhiteSpace($Path)) {
+        try { $sourceFileName = Split-Path -Path $Path -Leaf } catch { $sourceFileName = "" }
+    }
+
+    return [ordered]@{
+        source_file_path = $Path
+        source_file_name = $sourceFileName
+        source_file_pattern = $Pattern
+        source_file_sha256 = $sha
+        source_file_last_write_utc = $lastWriteUtc
+    }
+}
+
+function Initialize-MasterControlDbLocal {
+    param([string]$RepoRoot)
+
+    $result = [ordered]@{
+        available = $false
+        error = ""
+    }
+
+    try {
+        $dbQueryModule = Join-Path $RepoRoot "tools\common\DbQuery.psm1"
+        if (-not (Test-Path -LiteralPath $dbQueryModule)) {
+            throw "DbQuery module not found: $dbQueryModule"
+        }
+
+        Import-Module $dbQueryModule -Force -ErrorAction Stop
+
+        $mcDbModule = Join-Path $RepoRoot "tools\common\MasterControlDb.psm1"
+        if (-not (Test-Path -LiteralPath $mcDbModule)) {
+            throw "MasterControlDb module not found: $mcDbModule"
+        }
+
+        Import-Module $mcDbModule -Force -ErrorAction Stop
+
+        $required = @(
+            "Write-McProviderSnapshotDeltaPlanSummary",
+            "Write-McProviderSnapshotDeltaPlanRow"
+        )
+
+        foreach ($commandName in $required) {
+            if (-not (Get-Command $commandName -ErrorAction SilentlyContinue)) {
+                throw "Required command missing: $commandName"
+            }
+        }
+
+        $result.available = $true
+    }
+    catch {
+        $result.available = $false
+        $result.error = $_.Exception.Message
+    }
+
+    return [pscustomobject]$result
+}
+
 function New-SnapshotPlanRowLocal {
     param(
         [string]$MediaType,
@@ -129,13 +263,13 @@ function New-SnapshotPlanRowLocal {
             summary_path = ""
             generated_at_utc = ""
             item_count_estimate = ""
-            changed = ""
-            raw_changed = ""
-            normalized_changed = ""
+            changed = $null
+            raw_changed = $null
+            normalized_changed = $null
             change_status = ""
             provider_http_status = ""
-            provider_calls = ""
-            db_imported = ""
+            provider_calls = $null
+            db_imported = $null
             snapshot_path = ""
             snapshot_length = ""
             snapshot_sha256 = ""
@@ -157,13 +291,13 @@ function New-SnapshotPlanRowLocal {
             summary_path = $latestFile.FullName
             generated_at_utc = ""
             item_count_estimate = ""
-            changed = ""
-            raw_changed = ""
-            normalized_changed = ""
+            changed = $null
+            raw_changed = $null
+            normalized_changed = $null
             change_status = ""
             provider_http_status = ""
-            provider_calls = ""
-            db_imported = ""
+            provider_calls = $null
+            db_imported = $null
             snapshot_path = ""
             snapshot_length = ""
             snapshot_sha256 = ""
@@ -215,13 +349,13 @@ function New-SnapshotPlanRowLocal {
         summary_path = $latestFile.FullName
         generated_at_utc = [string]$summary.generated_at_utc
         item_count_estimate = [string]$summary.item_count_estimate
-        changed = [string]$changed
-        raw_changed = [string]$rawChanged
-        normalized_changed = [string]$normalizedChanged
+        changed = (ConvertTo-TinyIntLocal $changed)
+        raw_changed = (ConvertTo-TinyIntLocal $rawChanged)
+        normalized_changed = (ConvertTo-TinyIntLocal $normalizedChanged)
         change_status = $changeStatus
         provider_http_status = [string]$summary.provider_http_status
-        provider_calls = [string]$summary.provider_calls
-        db_imported = [string]$summary.db_imported
+        provider_calls = (ConvertTo-TinyIntLocal $summary.provider_calls)
+        db_imported = (ConvertTo-TinyIntLocal $summary.db_imported)
         snapshot_path = [string]$summary.snapshot_path
         snapshot_length = [string]$summary.snapshot_length
         snapshot_sha256 = [string]$summary.snapshot_sha256
@@ -229,6 +363,62 @@ function New-SnapshotPlanRowLocal {
         prior_snapshot_path = [string]$summary.prior_snapshot_path
         prior_normalized_snapshot_sha256 = [string]$summary.prior_normalized_snapshot_sha256
     }
+}
+
+function Write-MasterControlDeltaPlanLocal {
+    param(
+        [bool]$McDbAvailable,
+        [object]$Summary,
+        [object[]]$Rows,
+        [string]$PlanCsv,
+        [string]$SummaryJson
+    )
+
+    $writeResult = [ordered]@{
+        available = $McDbAvailable
+        attempted = $false
+        summary_written = $false
+        detail_written_count = 0
+        error = ""
+    }
+
+    if (-not $McDbAvailable) {
+        return [pscustomobject]$writeResult
+    }
+
+    try {
+        $writeResult.attempted = $true
+
+        $summaryHash = ConvertTo-HashtableLocal -Object $Summary
+        $summarySource = Get-FileMetaLocal `
+            -Path $SummaryJson `
+            -Pattern "provider_snapshot_delta_plan_summary_TIMESTAMP.json"
+
+        Write-McProviderSnapshotDeltaPlanSummary `
+            -Summary $summaryHash `
+            -SourceMeta $summarySource | Out-Null
+
+        $writeResult.summary_written = $true
+
+        $detailSource = Get-FileMetaLocal `
+            -Path $PlanCsv `
+            -Pattern "provider_snapshot_delta_plan_TIMESTAMP.csv"
+
+        foreach ($row in $Rows) {
+            $rowHash = ConvertTo-HashtableLocal -Object $row
+
+            Write-McProviderSnapshotDeltaPlanRow `
+                -PlanRow $rowHash `
+                -SourceMeta $detailSource | Out-Null
+
+            $writeResult.detail_written_count++
+        }
+    }
+    catch {
+        $writeResult.error = $_.Exception.Message
+    }
+
+    return [pscustomobject]$writeResult
 }
 
 $script:RunId = New-RunIdLocal
@@ -244,6 +434,8 @@ if (Test-Path -LiteralPath $loggingModule) {
     Import-Module $loggingModule -Force -ErrorAction SilentlyContinue
     $loggingAvailable = [bool](Get-Command Write-JobLog -ErrorAction SilentlyContinue)
 }
+
+$mcDb = Initialize-MasterControlDbLocal -RepoRoot $repoRoot
 
 $startedAt = Get-Date
 $signalName = "provider_snapshot_delta_plan_completed"
@@ -287,6 +479,8 @@ try {
                 mac_user_id = $MacUserId
                 provider_label = $ProviderLabel
                 reports_root = $reportsRootFull
+                mc_db_available = [bool]$mcDb.available
+                mc_db_error = [string]$mcDb.error
             } | Out-Null
     }
 
@@ -356,6 +550,15 @@ try {
 
     $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $summaryJson -Encoding UTF8
 
+    $script:Stage = "write_master_control_db"
+
+    $mcWrite = Write-MasterControlDeltaPlanLocal `
+        -McDbAvailable ([bool]$mcDb.available) `
+        -Summary $summary `
+        -Rows @($rows) `
+        -PlanCsv $planCsv `
+        -SummaryJson $summaryJson
+
     if ($loggingAvailable) {
         $script:Stage = "emit_success"
 
@@ -374,6 +577,11 @@ try {
                 db_imported = $false
                 snapshot_summary_count = @($rows).Count
                 duration_ms = $durationMs
+                mc_db_available = [bool]$mcDb.available
+                mc_db_attempted = [bool]$mcWrite.attempted
+                mc_db_summary_written = [bool]$mcWrite.summary_written
+                mc_db_detail_written_count = [int]$mcWrite.detail_written_count
+                mc_db_error = [string]$mcWrite.error
             } | Out-Null
 
         Emit-Signal `
@@ -398,12 +606,23 @@ try {
                 db_imported = $false
                 plan_csv = $planCsv
                 summary_json = $summaryJson
+                mc_db_available = [bool]$mcDb.available
+                mc_db_attempted = [bool]$mcWrite.attempted
+                mc_db_summary_written = [bool]$mcWrite.summary_written
+                mc_db_detail_written_count = [int]$mcWrite.detail_written_count
+                mc_db_error = [string]$mcWrite.error
             } | Out-Null
     }
 
-    Write-Output ("OK: provider snapshot delta plan completed. status={0} read_only=True provider_calls=False db_imported=False snapshot_summary_count={1} output_root=""{2}"" run_id={3}" -f `
+    $mcDbStatusText = "mc_db_available=$($mcDb.available) mc_db_attempted=$($mcWrite.attempted) mc_db_summary_written=$($mcWrite.summary_written) mc_db_detail_written_count=$($mcWrite.detail_written_count)"
+    if (-not [string]::IsNullOrWhiteSpace([string]$mcWrite.error)) {
+        $mcDbStatusText = "$mcDbStatusText mc_db_error=""$($mcWrite.error)"""
+    }
+
+    Write-Output ("OK: provider snapshot delta plan completed. status={0} read_only=True provider_calls=False db_imported=False snapshot_summary_count={1} {2} output_root=""{3}"" run_id={4}" -f `
         $statusValue, `
         @($rows).Count, `
+        $mcDbStatusText, `
         $outputRootFull, `
         $script:RunId)
 
@@ -428,6 +647,8 @@ catch {
             -Data @{
                 event_message = "Provider snapshot delta plan failed."
                 error = $errorMessage
+                mc_db_available = if ($null -ne $mcDb) { [bool]$mcDb.available } else { $false }
+                mc_db_error = if ($null -ne $mcDb) { [string]$mcDb.error } else { "" }
             } | Out-Null
 
         Emit-Signal `
@@ -448,10 +669,11 @@ catch {
                 owner = "Content Ops"
                 kill_switch_name = $KillSwitchName
                 error = $errorMessage
+                mc_db_available = if ($null -ne $mcDb) { [bool]$mcDb.available } else { $false }
+                mc_db_error = if ($null -ne $mcDb) { [string]$mcDb.error } else { "" }
             } | Out-Null
     }
 
     Write-Error "FAILED: provider snapshot delta plan failed. run_id=$script:RunId $errorMessage"
     exit 1
 }
-
