@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Run the governed provider snapshot spine for one MiraTV account.
 
@@ -16,10 +16,11 @@
 
     This runner:
       - DOES call provider APIs through the snapshot workers.
-      - DOES NOT import to database.
-      - DOES NOT write provider inventory to DB.
+      - DOES NOT import provider inventory to database.
       - DOES NOT run get_series_info.
       - DOES NOT run EPG import.
+      - Writes existing CSV/JSON files as debug/fallback artifacts.
+      - Writes Master Control DB summary/step rows directly when MasterControlDb.psm1 is available.
       - Stops on first failed child worker unless -ContinueOnError is used.
 
     Intended clean-repo location:
@@ -39,7 +40,8 @@ param(
     [string]$OutputRoot = "runtime/reports/provider_snapshot_spine_runner",
 
     [switch]$SkipAccountInspection,
-    [switch]$ContinueOnError
+    [switch]$ContinueOnError,
+    [switch]$SkipMcDbLog
 )
 
 Set-StrictMode -Version Latest
@@ -57,6 +59,7 @@ function Get-RepoRootLocal {
 
 function New-RunIdLocal {
     param([string]$Prefix = "provider-snapshot-spine-runner")
+
     $stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssfffZ")
     $guid = [guid]::NewGuid().ToString("N")
     return "$Prefix-$stamp-$guid"
@@ -64,6 +67,7 @@ function New-RunIdLocal {
 
 function New-DirectoryLocal {
     param([Parameter(Mandatory = $true)][string]$Path)
+
     if (-not (Test-Path -LiteralPath $Path)) {
         New-Item -ItemType Directory -Force -Path $Path | Out-Null
     }
@@ -129,9 +133,11 @@ function Invoke-ChildWorkerLocal {
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = "pwsh"
+
     foreach ($arg in $argumentList) {
         [void]$psi.ArgumentList.Add($arg)
     }
+
     $psi.WorkingDirectory = $RepoRoot
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
@@ -154,7 +160,7 @@ function Invoke-ChildWorkerLocal {
     $stdoutTail = (($stdoutLines | Select-Object -Last 8) -join " | ")
     $stderrTail = (($stderrLines | Select-Object -Last 8) -join " | ")
 
-    [pscustomobject]@{
+    return [pscustomobject]@{
         step_name = $StepName
         worker_path = $RelativePath
         exists = $true
@@ -167,9 +173,7 @@ function Invoke-ChildWorkerLocal {
 }
 
 function Get-ResolvedProviderLabelFromChildOutputLocal {
-    param(
-        [string]$StdoutTail
-    )
+    param([string]$StdoutTail)
 
     if ([string]::IsNullOrWhiteSpace($StdoutTail)) {
         return ""
@@ -194,10 +198,100 @@ function Get-ResolvedProviderLabelFromChildOutputLocal {
     }
 }
 
+function Convert-ObjectToHashtableLocal {
+    param([Parameter(Mandatory = $true)][object]$Object)
+
+    $hash = @{}
+
+    foreach ($prop in $Object.PSObject.Properties) {
+        $hash[$prop.Name] = $prop.Value
+    }
+
+    return $hash
+}
+
+function Initialize-MasterControlDbLocal {
+    param(
+        [string]$RepoRoot,
+        [bool]$Skip
+    )
+
+    $result = [ordered]@{
+        available = $false
+        error = ""
+    }
+
+    if ($Skip) {
+        $result.error = "Master Control DB logging skipped by switch."
+        return [pscustomobject]$result
+    }
+
+    try {
+        $dbQueryModulePath = Join-Path $RepoRoot "tools\common\DbQuery.psm1"
+        if (Test-Path -LiteralPath $dbQueryModulePath) {
+            Import-Module $dbQueryModulePath -Force
+        }
+
+        $mcDbModulePath = Join-Path $RepoRoot "tools\common\MasterControlDb.psm1"
+        if (-not (Test-Path -LiteralPath $mcDbModulePath)) {
+            $result.error = "MasterControlDb module not found: $mcDbModulePath"
+            return [pscustomobject]$result
+        }
+
+        Import-Module $mcDbModulePath -Force
+        $result.available = [bool](Get-Command Write-McProviderSnapshotSpineSummary -ErrorAction SilentlyContinue)
+
+        if (-not $result.available) {
+            $result.error = "MasterControlDb module loaded, but Write-McProviderSnapshotSpineSummary is unavailable."
+        }
+    }
+    catch {
+        $result.available = $false
+        $result.error = $_.Exception.Message
+    }
+
+    return [pscustomobject]$result
+}
+
+function Write-MasterControlDbForSpineLocal {
+    param(
+        [object]$Summary,
+        [object[]]$Rows,
+        [string]$SummaryJson,
+        [string]$ReportCsv
+    )
+
+    $summaryHash = Convert-ObjectToHashtableLocal -Object $Summary
+
+    $summaryFile = Get-Item -LiteralPath $SummaryJson
+    $summaryMeta = New-McSourceMeta `
+        -SourceFilePath $summaryFile.FullName `
+        -SourceFilePattern "provider_snapshot_spine_runner_summary_TIMESTAMP.json" `
+        -SourceFileSha256 ((Get-FileHash -LiteralPath $summaryFile.FullName -Algorithm SHA256).Hash) `
+        -SourceFileLastWriteUtc $summaryFile.LastWriteTimeUtc.ToString("o")
+
+    Write-McProviderSnapshotSpineSummary `
+        -Summary $summaryHash `
+        -SourceMeta $summaryMeta | Out-Null
+
+    $reportFile = Get-Item -LiteralPath $ReportCsv
+    $reportMeta = New-McSourceMeta `
+        -SourceFilePath $reportFile.FullName `
+        -SourceFilePattern "provider_snapshot_spine_runner_report_TIMESTAMP.csv" `
+        -SourceFileSha256 ((Get-FileHash -LiteralPath $reportFile.FullName -Algorithm SHA256).Hash) `
+        -SourceFileLastWriteUtc $reportFile.LastWriteTimeUtc.ToString("o")
+
+    foreach ($row in $Rows) {
+        $stepHash = Convert-ObjectToHashtableLocal -Object $row
+
+        Write-McProviderSnapshotSpineStep `
+            -StepRow $stepHash `
+            -SourceMeta $reportMeta | Out-Null
+    }
+}
+
 $script:RunId = New-RunIdLocal
 $repoRoot = Get-RepoRootLocal
-$ProviderLabelForChildren = $ProviderLabel
-$ProviderLabelForChildren = $ProviderLabel
 $ProviderLabelForChildren = $ProviderLabel
 $outputRootFull = if ([System.IO.Path]::IsPathRooted($OutputRoot)) { $OutputRoot } else { Join-Path $repoRoot $OutputRoot }
 New-DirectoryLocal -Path $outputRootFull
@@ -208,6 +302,10 @@ if (Test-Path -LiteralPath $loggingModule) {
     Import-Module $loggingModule -Force -ErrorAction SilentlyContinue
     $loggingAvailable = [bool](Get-Command Write-JobLog -ErrorAction SilentlyContinue)
 }
+
+$mcDb = Initialize-MasterControlDbLocal -RepoRoot $repoRoot -Skip ([bool]$SkipMcDbLog)
+$mcDbAvailable = [bool]$mcDb.available
+$mcDbLogError = [string]$mcDb.error
 
 $startedAt = Get-Date
 $signalName = "provider_snapshot_spine_runner_completed"
@@ -232,6 +330,8 @@ try {
                     kill_switch_name = $KillSwitchName
                     mac_user_id = $MacUserId
                     provider_label = $ProviderLabelForChildren
+                    mc_db_available = $mcDbAvailable
+                    mc_db_error = $mcDbLogError
                 } | Out-Null
 
             Write-Output "BLOCKED: provider snapshot spine runner blocked. run_id=$script:RunId kill_switch=$KillSwitchName"
@@ -251,6 +351,8 @@ try {
                 mac_user_id = $MacUserId
                 provider_label = $ProviderLabelForChildren
                 continue_on_error = [bool]$ContinueOnError
+                mc_db_available = $mcDbAvailable
+                mc_db_error = $mcDbLogError
             } | Out-Null
     }
 
@@ -276,7 +378,6 @@ try {
     )
 
     $rows = @()
-    $ProviderLabelForChildren = $ProviderLabel
 
     foreach ($step in $steps) {
         $row = Invoke-ChildWorkerLocal `
@@ -336,6 +437,38 @@ try {
 
     $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $summaryJson -Encoding UTF8
 
+    if ($mcDbAvailable -and -not $SkipMcDbLog) {
+        $script:Stage = "emit_master_control_db"
+
+        try {
+            Write-MasterControlDbForSpineLocal `
+                -Summary $summary `
+                -Rows $rows `
+                -SummaryJson $summaryJson `
+                -ReportCsv $reportCsv
+        }
+        catch {
+            $mcDbLogError = "Master Control DB logging failed: $($_.Exception.Message)"
+
+            if ($loggingAvailable) {
+                Write-JobLog `
+                    -RunId $script:RunId `
+                    -JobName $WorkerName `
+                    -WorkerName $WorkerName `
+                    -Component $Component `
+                    -Environment $Environment `
+                    -EventType "master_control_db_log_failed" `
+                    -Status "warning" `
+                    -Data @{
+                        event_message = "Provider snapshot spine completed, but Master Control DB logging failed."
+                        error = $mcDbLogError
+                    } | Out-Null
+            }
+
+            Write-Warning $mcDbLogError
+        }
+    }
+
     if ($loggingAvailable) {
         $script:Stage = "emit_success"
 
@@ -356,6 +489,8 @@ try {
                 pass_count = $summary.pass_count
                 fail_count = $summary.fail_count
                 duration_ms = $durationMs
+                mc_db_available = $mcDbAvailable
+                mc_db_error = $mcDbLogError
             } | Out-Null
 
         Emit-Signal `
@@ -377,17 +512,20 @@ try {
                 kill_switch_name = $KillSwitchName
                 provider_calls = $true
                 db_imported = $false
+                mc_db_available = $mcDbAvailable
+                mc_db_error = $mcDbLogError
                 report_csv = $reportCsv
                 summary_json = $summaryJson
             } | Out-Null
     }
 
-    Write-Output ("RESULT: {0} step_count={1} executed_count={2} pass_count={3} fail_count={4} provider_calls=True db_imported=False run_id={5}" -f `
+    Write-Output ("RESULT: {0} step_count={1} executed_count={2} pass_count={3} fail_count={4} provider_calls=True db_imported=False mc_db_available={5} run_id={6}" -f `
         $statusValue, `
         $steps.Count, `
         $rows.Count, `
         $summary.pass_count, `
         $summary.fail_count, `
+        $mcDbAvailable, `
         $script:RunId)
 
     Write-Output ("FILES: report_csv=""{0}"" summary_json=""{1}""" -f $reportCsv, $summaryJson)
@@ -413,6 +551,8 @@ catch {
             -Data @{
                 event_message = "Provider snapshot spine runner failed."
                 error = $errorMessage
+                mc_db_available = $mcDbAvailable
+                mc_db_error = $mcDbLogError
             } | Out-Null
 
         Emit-Signal `
@@ -433,14 +573,11 @@ catch {
                 owner = "Content Ops"
                 kill_switch_name = $KillSwitchName
                 error = $errorMessage
+                mc_db_available = $mcDbAvailable
+                mc_db_error = $mcDbLogError
             } | Out-Null
     }
 
     Write-Error "FAILED: provider snapshot spine runner failed. run_id=$script:RunId $errorMessage"
     exit 1
 }
-
-
-
-
-
