@@ -24,6 +24,12 @@
       mode only when all explicit write gates pass.
     - Row-level disposition discipline is enforced.
 
+  Master Control DB path:
+    - writes direct DB logging rows to:
+        xpdgxfsp_content.mc_vod_streams_delta_limited_apply_summary
+        xpdgxfsp_content.mc_vod_streams_delta_limited_apply
+    - keeps existing CSV/JSON outputs as debug/fallback artifacts.
+
 .CONTRACT-MARKERS
   Write-JobLog
   Emit-Signal
@@ -71,6 +77,151 @@ New-Item -ItemType Directory -Force -Path $LogRoot | Out-Null
 function Get-DurationMs {
     param([datetime]$Start)
     return [int][Math]::Round(((Get-Date) - $Start).TotalMilliseconds)
+}
+
+
+function ConvertTo-HashtableLocal {
+    param([Parameter(Mandatory = $true)][object]$Object)
+
+    $hash = @{}
+    foreach ($property in $Object.PSObject.Properties) {
+        $hash[$property.Name] = $property.Value
+    }
+    return $hash
+}
+
+function Get-FileMetaLocal {
+    param(
+        [string]$Path,
+        [string]$Pattern
+    )
+
+    $sha = ""
+    $lastWriteUtc = ""
+
+    if (-not [string]::IsNullOrWhiteSpace($Path) -and (Test-Path -LiteralPath $Path)) {
+        try { $sha = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash } catch { $sha = "" }
+        try { $lastWriteUtc = (Get-Item -LiteralPath $Path).LastWriteTimeUtc.ToString("o") } catch { $lastWriteUtc = "" }
+    }
+
+    if (Get-Command New-McSourceMeta -ErrorAction SilentlyContinue) {
+        return New-McSourceMeta `
+            -SourceFilePath $Path `
+            -SourceFilePattern $Pattern `
+            -SourceFileSha256 $sha `
+            -SourceFileLastWriteUtc $lastWriteUtc
+    }
+
+    $sourceFileName = ""
+    if (-not [string]::IsNullOrWhiteSpace($Path)) {
+        try { $sourceFileName = Split-Path -Path $Path -Leaf } catch { $sourceFileName = "" }
+    }
+
+    return [ordered]@{
+        source_file_path = $Path
+        source_file_name = $sourceFileName
+        source_file_pattern = $Pattern
+        source_file_sha256 = $sha
+        source_file_last_write_utc = $lastWriteUtc
+    }
+}
+
+function Initialize-MasterControlDbLocal {
+    param([string]$RepoRoot)
+
+    $result = [ordered]@{
+        available = $false
+        error = ""
+    }
+
+    try {
+        $dbQueryModule = Join-Path $RepoRoot "tools\common\DbQuery.psm1"
+        if (Test-Path -LiteralPath $dbQueryModule) {
+            Import-Module $dbQueryModule -Force -ErrorAction Stop
+        }
+
+        $mcDbModule = Join-Path $RepoRoot "tools\common\MasterControlDb.psm1"
+        if (-not (Test-Path -LiteralPath $mcDbModule)) {
+            throw "MasterControlDb module not found: $mcDbModule"
+        }
+
+        Import-Module $mcDbModule -Force -ErrorAction Stop
+
+        $required = @(
+            "Write-McVodStreamsDeltaLimitedApplySummary",
+            "Write-McVodStreamsDeltaLimitedApplyRow"
+        )
+
+        foreach ($commandName in $required) {
+            if (-not (Get-Command $commandName -ErrorAction SilentlyContinue)) {
+                throw "Required command missing: $commandName"
+            }
+        }
+
+        $result.available = $true
+    }
+    catch {
+        $result.available = $false
+        $result.error = $_.Exception.Message
+    }
+
+    return [pscustomobject]$result
+}
+
+function Write-MasterControlVodApplyLocal {
+    param(
+        [bool]$McDbAvailable,
+        [object]$Summary,
+        [object[]]$AdapterRows,
+        [string]$ReportCsv,
+        [string]$SummaryJson
+    )
+
+    $writeResult = [ordered]@{
+        available = $McDbAvailable
+        attempted = $false
+        summary_written = $false
+        detail_written_count = 0
+        error = ""
+    }
+
+    if (-not $McDbAvailable) {
+        return [pscustomobject]$writeResult
+    }
+
+    try {
+        $writeResult.attempted = $true
+
+        $summaryHash = ConvertTo-HashtableLocal -Object $Summary
+        $summarySource = Get-FileMetaLocal `
+            -Path $SummaryJson `
+            -Pattern "vod_streams_delta_limited_apply_summary_TIMESTAMP.json"
+
+        Write-McVodStreamsDeltaLimitedApplySummary `
+            -Summary $summaryHash `
+            -SourceMeta $summarySource | Out-Null
+
+        $writeResult.summary_written = $true
+
+        $detailSource = Get-FileMetaLocal `
+            -Path $ReportCsv `
+            -Pattern "vod_streams_delta_limited_apply_TIMESTAMP.csv"
+
+        foreach ($row in $AdapterRows) {
+            $rowHash = ConvertTo-HashtableLocal -Object $row
+
+            Write-McVodStreamsDeltaLimitedApplyRow `
+                -ApplyRow $rowHash `
+                -SourceMeta $detailSource | Out-Null
+
+            $writeResult.detail_written_count++
+        }
+    }
+    catch {
+        $writeResult.error = $_.Exception.Message
+    }
+
+    return [pscustomobject]$writeResult
 }
 
 function Write-LocalJsonLog {
@@ -293,6 +444,8 @@ function Get-LatestSqlContractSummary {
     if ($null -eq $latest) { return $null }
     return Read-JsonFile -Path $latest.FullName
 }
+
+$mcDb = Initialize-MasterControlDbLocal -RepoRoot $RepoRoot
 
 try {
     if ($Limit -lt 1) { $Limit = 1 }
@@ -595,6 +748,21 @@ try {
 
     $summary | ConvertTo-Json -Depth 20 | Set-Content -Path $summaryJson -Encoding UTF8
 
+    $mcWrite = Write-MasterControlVodApplyLocal `
+        -McDbAvailable ([bool]$mcDb.available) `
+        -Summary ([pscustomobject]$summary) `
+        -AdapterRows @($adapterRows) `
+        -ReportCsv $reportCsv `
+        -SummaryJson $summaryJson
+
+    $summary["mc_db_available"] = [bool]$mcDb.available
+    $summary["mc_db_attempted"] = [bool]$mcWrite.attempted
+    $summary["mc_db_summary_written"] = [bool]$mcWrite.summary_written
+    $summary["mc_db_detail_written_count"] = [int]$mcWrite.detail_written_count
+    $summary["mc_db_error"] = [string]$mcWrite.error
+
+    $summary | ConvertTo-Json -Depth 20 | Set-Content -Path $summaryJson -Encoding UTF8
+
     Emit-LocalSignal -SignalName $CompletedSignal -SignalValue $status -Payload $summary
     Emit-LocalSignal -SignalName $DispositionSignal -SignalValue $disposition -Payload ([ordered]@{ run_id = $RunId })
     Emit-LocalSignal -SignalName $WouldWriteCountSignal -SignalValue $wouldWriteCount -Payload ([ordered]@{ run_id = $RunId })
@@ -604,7 +772,7 @@ try {
     Write-LocalJsonLog -EventName "job_completed" -Status $status -Data $summary
 
     if (-not $Quiet) {
-        Write-Output "OK: VOD streams limited apply gate evaluated. status=$status disposition=$disposition dry_run=$dryRun apply_requested=$([bool]$Apply) allow_db_write=$([bool]$AllowDbWrite) write_authorized=$([bool]$writeAuthorization.authorized) adapter_dry_run=$dryRunCount rejected=$rejectedCount would_write=$wouldWriteCount actual_write=$actualWriteCount db_writes=$dbWrites provider_calls=False run_id=$RunId"
+        Write-Output "OK: VOD streams limited apply gate evaluated. status=$status disposition=$disposition dry_run=$dryRun apply_requested=$([bool]$Apply) allow_db_write=$([bool]$AllowDbWrite) write_authorized=$([bool]$writeAuthorization.authorized) adapter_dry_run=$dryRunCount rejected=$rejectedCount would_write=$wouldWriteCount actual_write=$actualWriteCount db_writes=$dbWrites provider_calls=False mc_db_available=$($mcDb.available) mc_db_attempted=$($mcWrite.attempted) mc_db_summary_written=$($mcWrite.summary_written) mc_db_detail_written_count=$($mcWrite.detail_written_count) run_id=$RunId"
         Write-Output "FILES: report_csv=$reportCsv report_json=$reportJson summary_json=$summaryJson"
         Import-Csv $reportCsv | Format-Table -AutoSize
     }
@@ -624,6 +792,8 @@ catch {
         Write-LocalJsonLog -EventName "job_failed" -Status "failed" -Data ([ordered]@{
             error_message = $message
             duration_ms = Get-DurationMs -Start $StartedAt
+            mc_db_available = if ($null -ne $mcDb) { [bool]$mcDb.available } else { $false }
+            mc_db_error = if ($null -ne $mcDb) { [string]$mcDb.error } else { "" }
         })
     }
     catch {}
