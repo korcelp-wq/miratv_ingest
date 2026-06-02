@@ -60,7 +60,6 @@ function ConvertTo-McSqlLiteral {
         return "NULL"
     }
 
-    # MySQL treats backslash as an escape in normal SQL string literals.
     $text = $text.Replace("\", "\\")
     $text = $text.Replace("'", "''")
 
@@ -124,7 +123,7 @@ function New-McInsertSql {
     $schemaSql = ConvertTo-McSqlIdentifier -Name $SchemaName
     $tableSql = ConvertTo-McSqlIdentifier -Name $TableName
 
-    return "INSERT INTO $schemaSql.$tableSql (" + ($columns -join ",") + ") VALUES (" + ($literals -join ",") + ");"
+    return "INSERT INTO $schemaSql.$tableSql (" + ($columns -join ", ") + ") VALUES (" + ($literals -join ", ") + ");"
 }
 
 function Write-McTableRow {
@@ -132,8 +131,8 @@ function Write-McTableRow {
     param(
         [Parameter(Mandatory=$true)][string]$TableName,
         [Parameter(Mandatory=$true)][hashtable]$Values,
-        [string]$DatabaseKey = "content",
         [string]$SchemaName = "xpdgxfsp_content",
+        [string]$DatabaseKey = "content",
         [switch]$PreviewOnly
     )
 
@@ -143,8 +142,8 @@ function Write-McTableRow {
         return [pscustomobject]@{
             status = "preview"
             table_name = $TableName
-            db_writes = $false
             sql = $sql
+            rows_affected = 0
         }
     }
 
@@ -157,12 +156,14 @@ function Write-McTableRow {
     return [pscustomobject]@{
         status = "pass"
         table_name = $TableName
-        db_writes = $true
-        result = $result
+        sql = $sql
+        rows_affected = if ($result.PSObject.Properties.Name -contains "rows_affected") { $result.rows_affected } else { $null }
+        raw_result = $result
     }
 }
 
 function Merge-McValues {
+    [CmdletBinding()]
     param(
         [hashtable]$Primary,
         [hashtable]$Secondary
@@ -209,6 +210,38 @@ function Write-McProviderSnapshotSpineStep {
 
     return Write-McTableRow `
         -TableName "mc_provider_snapshot_spine_runner_report" `
+        -Values $values `
+        -PreviewOnly:$PreviewOnly
+}
+
+function Write-McProviderSnapshotDeltaPlanSummary {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][hashtable]$Summary,
+        [hashtable]$SourceMeta = @{},
+        [switch]$PreviewOnly
+    )
+
+    $values = Merge-McValues -Primary $Summary -Secondary $SourceMeta
+
+    return Write-McTableRow `
+        -TableName "mc_provider_snapshot_delta_plan_summary" `
+        -Values $values `
+        -PreviewOnly:$PreviewOnly
+}
+
+function Write-McProviderSnapshotDeltaPlanRow {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][hashtable]$PlanRow,
+        [hashtable]$SourceMeta = @{},
+        [switch]$PreviewOnly
+    )
+
+    $values = Merge-McValues -Primary $PlanRow -Secondary $SourceMeta
+
+    return Write-McTableRow `
+        -TableName "mc_provider_snapshot_delta_plan" `
         -Values $values `
         -PreviewOnly:$PreviewOnly
 }
@@ -323,4 +356,6 @@ Export-ModuleMember -Function `
     Write-McTableRow, `
     Write-McProviderSnapshotSpineSummary, `
     Write-McProviderSnapshotSpineStep, `
+    Write-McProviderSnapshotDeltaPlanSummary, `
+    Write-McProviderSnapshotDeltaPlanRow, `
     Get-McDashboardCardSql
