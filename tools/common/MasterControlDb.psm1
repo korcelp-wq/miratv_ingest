@@ -246,6 +246,39 @@ function Write-McProviderSnapshotDeltaPlanRow {
         -PreviewOnly:$PreviewOnly
 }
 
+
+function Write-McProviderSnapshotGovernedImportRunnerSummary {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][hashtable]$Summary,
+        [hashtable]$SourceMeta = @{},
+        [switch]$PreviewOnly
+    )
+
+    $values = Merge-McValues -Primary $Summary -Secondary $SourceMeta
+
+    return Write-McTableRow `
+        -TableName "mc_provider_snapshot_governed_import_runner_summary" `
+        -Values $values `
+        -PreviewOnly:$PreviewOnly
+}
+
+function Write-McProviderSnapshotGovernedImportRunnerRow {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][hashtable]$RunnerRow,
+        [hashtable]$SourceMeta = @{},
+        [switch]$PreviewOnly
+    )
+
+    $values = Merge-McValues -Primary $RunnerRow -Secondary $SourceMeta
+
+    return Write-McTableRow `
+        -TableName "mc_provider_snapshot_governed_import_runner" `
+        -Values $values `
+        -PreviewOnly:$PreviewOnly
+}
+
 function Get-McDashboardCardSql {
     [CmdletBinding()]
     param()
@@ -358,4 +391,6 @@ Export-ModuleMember -Function `
     Write-McProviderSnapshotSpineStep, `
     Write-McProviderSnapshotDeltaPlanSummary, `
     Write-McProviderSnapshotDeltaPlanRow, `
+    Write-McProviderSnapshotGovernedImportRunnerSummary, `
+    Write-McProviderSnapshotGovernedImportRunnerRow, `
     Get-McDashboardCardSql
