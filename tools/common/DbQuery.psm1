@@ -1,47 +1,119 @@
 # MiraTV DB Query Helper for dog_open_proc.php
 # File: tools/common/DbQuery.psm1
 # Purpose:
-#   Shared PowerShell helper for read-only DB query calls from MiraTV workers.
+#   Shared PowerShell helper for DB query calls from MiraTV workers.
 #
 # Bridge:
 #   dog_open_proc.php
 #
 # Design:
 #   - Does not contain credentials or tokens.
-#   - Does not hardcode production endpoint.
-#   - Reads endpoint from DOG_OPEN_PROC_ENDPOINT unless passed explicitly.
-#   - Reads token from DOG_OPEN_PROC_TOKEN unless passed explicitly.
-#   - Enforces local read-only SQL guard before calling the bridge.
-#   - Sends JSON POST body: token, db, sql, params.
-#   - Accepts response shapes from dog_open_proc.php:
-#       { rows: [...] }
-#       { rowsets: [...] }
-#       { result: [...] }
+#   - Does not hardcode a production token.
+#   - Endpoint/token resolution order:
+#       1. Explicit -Endpoint / -Token parameters
+#       2. Process/User/Machine environment variables:
+#            DOG_OPEN_PROC_ENDPOINT
+#            DOG_OPEN_PROC_TOKEN
+#       3. Optional local config files:
+#            runtime/control/dog_open_proc_config.json
+#            tools/config/dog_open_proc_config.json
+#   - Invoke-DogOpenProc is the low-level bridge and can execute any SQL the bridge allows.
+#   - Invoke-ReadOnlyDbQuery enforces the local read-only SQL guard.
 #
-# Required environment variables:
-#   $env:DOG_OPEN_PROC_ENDPOINT = "https://miratv.club/_workers/api/series/dog_open_proc.php"
-#   $env:DOG_OPEN_PROC_TOKEN = "<token>"
-#
-# Example:
-#   Import-Module ".\tools\common\DbQuery.psm1" -Force
-#   Invoke-ReadOnlyDbQuery -DatabaseKey "content" -Sql "SELECT COUNT(*) AS row_count FROM epg_programs"
+# Optional config example:
+# {
+#   "default_endpoint": "https://miratv.club/_workers/api/dog_open_proc.php",
+#   "token": "PUT_LOCAL_TOKEN_HERE",
+#   "endpoints": {
+#     "content": "https://miratv.club/_workers/api/dog_open_proc.php",
+#     "series": "https://miratv.club/_workers/api/series/dog_open_proc.php"
+#   }
+# }
 
 Set-StrictMode -Version Latest
 
-function Test-ReadOnlySql {
+function Get-DbQueryRepoRoot {
+    [CmdletBinding()]
+    param()
+
+    if ($PSScriptRoot) {
+        $candidate = Join-Path $PSScriptRoot "..\.."
+        $resolved = Resolve-Path -Path $candidate -ErrorAction SilentlyContinue
+        if ($null -ne $resolved) {
+            return $resolved.Path
+        }
+    }
+
+    return (Get-Location).Path
+}
+
+function Get-ObjectPropertyValue {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$Sql
+        [AllowNull()][object]$Object,
+        [Parameter(Mandatory = $true)][string]$Name
     )
+
+    if ($null -eq $Object) {
+        return $null
+    }
+
+    $property = $Object.PSObject.Properties |
+        Where-Object { $_.Name -ieq $Name } |
+        Select-Object -First 1
+
+    if ($null -eq $property) {
+        return $null
+    }
+
+    return $property.Value
+}
+
+function Get-DogOpenProcConfig {
+    [CmdletBinding()]
+    param([string]$ConfigPath = "")
+
+    $paths = @()
+
+    if (-not [string]::IsNullOrWhiteSpace($ConfigPath)) {
+        $paths += $ConfigPath
+    }
+
+    $repoRoot = Get-DbQueryRepoRoot
+    $paths += (Join-Path $repoRoot "runtime\control\dog_open_proc_config.json")
+    $paths += (Join-Path $repoRoot "tools\config\dog_open_proc_config.json")
+
+    foreach ($path in $paths) {
+        if ([string]::IsNullOrWhiteSpace($path)) {
+            continue
+        }
+
+        if (Test-Path -LiteralPath $path) {
+            try {
+                $config = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+                return [pscustomobject]@{
+                    path = $path
+                    config = $config
+                }
+            }
+            catch {
+                throw "Failed to parse dog_open_proc config file: $path error=$($_.Exception.Message)"
+            }
+        }
+    }
+
+    return $null
+}
+
+function Test-ReadOnlySql {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$Sql)
 
     if ([string]::IsNullOrWhiteSpace($Sql)) {
         throw "SQL is required."
     }
 
     $trimmed = $Sql.Trim()
-
-    # Remove leading comments enough to avoid blocking normal documented SELECT queries.
     $normalized = $trimmed -replace "(?ms)^\s*(--.*?$|/\*.*?\*/)\s*", ""
     $normalizedUpper = $normalized.ToUpperInvariant()
 
@@ -53,7 +125,7 @@ function Test-ReadOnlySql {
         "DESCRIBE ",
         "DESC ",
         "EXPLAIN ",
-	"WITH "
+        "WITH "
     )
 
     $startsAllowed = $false
@@ -66,7 +138,7 @@ function Test-ReadOnlySql {
     }
 
     if (-not $startsAllowed) {
-        throw "Blocked non-read-only SQL. Only SELECT, SHOW, DESCRIBE, EXPLAIN, and WITH queries are allowed from DbQuery.psm1."
+        throw "Blocked non-read-only SQL. Only SELECT, SHOW, DESCRIBE, EXPLAIN, and WITH queries are allowed from Invoke-ReadOnlyDbQuery."
     }
 
     $blockedPatterns = @(
@@ -106,71 +178,95 @@ function Test-ReadOnlySql {
 function Resolve-DogOpenProcEndpoint {
     [CmdletBinding()]
     param(
-        [string]$Endpoint = ""
+        [string]$Endpoint = "",
+        [string]$DatabaseKey = "",
+        [string]$ConfigPath = ""
     )
 
     if (-not [string]::IsNullOrWhiteSpace($Endpoint)) {
         return $Endpoint
     }
 
-    $envEndpoint = [Environment]::GetEnvironmentVariable("DOG_OPEN_PROC_ENDPOINT", "Process")
-
-    if (-not [string]::IsNullOrWhiteSpace($envEndpoint)) {
-        return $envEndpoint
+    foreach ($scope in @("Process", "User", "Machine")) {
+        $envEndpoint = [Environment]::GetEnvironmentVariable("DOG_OPEN_PROC_ENDPOINT", $scope)
+        if (-not [string]::IsNullOrWhiteSpace($envEndpoint)) {
+            return $envEndpoint
+        }
     }
 
-    $envEndpoint = [Environment]::GetEnvironmentVariable("DOG_OPEN_PROC_ENDPOINT", "User")
+    $configInfo = Get-DogOpenProcConfig -ConfigPath $ConfigPath
 
-    if (-not [string]::IsNullOrWhiteSpace($envEndpoint)) {
-        return $envEndpoint
+    if ($null -ne $configInfo) {
+        $config = $configInfo.config
+        $endpoints = Get-ObjectPropertyValue -Object $config -Name "endpoints"
+
+        if ($null -ne $endpoints -and -not [string]::IsNullOrWhiteSpace($DatabaseKey)) {
+            $dbEndpoint = Get-ObjectPropertyValue -Object $endpoints -Name $DatabaseKey
+            if (-not [string]::IsNullOrWhiteSpace([string]$dbEndpoint)) {
+                return [string]$dbEndpoint
+            }
+        }
+
+        $defaultEndpoint = Get-ObjectPropertyValue -Object $config -Name "default_endpoint"
+        if (-not [string]::IsNullOrWhiteSpace([string]$defaultEndpoint)) {
+            return [string]$defaultEndpoint
+        }
+
+        $endpointValue = Get-ObjectPropertyValue -Object $config -Name "endpoint"
+        if (-not [string]::IsNullOrWhiteSpace([string]$endpointValue)) {
+            return [string]$endpointValue
+        }
     }
 
-    $envEndpoint = [Environment]::GetEnvironmentVariable("DOG_OPEN_PROC_ENDPOINT", "Machine")
-
-    if (-not [string]::IsNullOrWhiteSpace($envEndpoint)) {
-        return $envEndpoint
-    }
-
-    throw "DOG_OPEN_PROC_ENDPOINT is not configured. Set DOG_OPEN_PROC_ENDPOINT or pass -Endpoint."
+    throw "DOG_OPEN_PROC_ENDPOINT is not configured. Set DOG_OPEN_PROC_ENDPOINT, pass -Endpoint, or create runtime\control\dog_open_proc_config.json."
 }
 
 function Resolve-DogOpenProcToken {
     [CmdletBinding()]
     param(
-        [string]$Token = ""
+        [string]$Token = "",
+        [string]$DatabaseKey = "",
+        [string]$ConfigPath = ""
     )
 
     if (-not [string]::IsNullOrWhiteSpace($Token)) {
         return $Token
     }
 
-    $envToken = [Environment]::GetEnvironmentVariable("DOG_OPEN_PROC_TOKEN", "Process")
-
-    if (-not [string]::IsNullOrWhiteSpace($envToken)) {
-        return $envToken
+    foreach ($scope in @("Process", "User", "Machine")) {
+        $envToken = [Environment]::GetEnvironmentVariable("DOG_OPEN_PROC_TOKEN", $scope)
+        if (-not [string]::IsNullOrWhiteSpace($envToken)) {
+            return $envToken
+        }
     }
 
-    $envToken = [Environment]::GetEnvironmentVariable("DOG_OPEN_PROC_TOKEN", "User")
+    $configInfo = Get-DogOpenProcConfig -ConfigPath $ConfigPath
 
-    if (-not [string]::IsNullOrWhiteSpace($envToken)) {
-        return $envToken
+    if ($null -ne $configInfo) {
+        $config = $configInfo.config
+        $tokens = Get-ObjectPropertyValue -Object $config -Name "tokens"
+
+        if ($null -ne $tokens -and -not [string]::IsNullOrWhiteSpace($DatabaseKey)) {
+            $dbToken = Get-ObjectPropertyValue -Object $tokens -Name $DatabaseKey
+            if (-not [string]::IsNullOrWhiteSpace([string]$dbToken)) {
+                return [string]$dbToken
+            }
+        }
+
+        foreach ($name in @("token", "default_token")) {
+            $tokenValue = Get-ObjectPropertyValue -Object $config -Name $name
+            if (-not [string]::IsNullOrWhiteSpace([string]$tokenValue)) {
+                return [string]$tokenValue
+            }
+        }
     }
 
-    $envToken = [Environment]::GetEnvironmentVariable("DOG_OPEN_PROC_TOKEN", "Machine")
-
-    if (-not [string]::IsNullOrWhiteSpace($envToken)) {
-        return $envToken
-    }
-
-    throw "DOG_OPEN_PROC_TOKEN is not configured. Set DOG_OPEN_PROC_TOKEN or pass -Token."
+    throw "DOG_OPEN_PROC_TOKEN is not configured. Set DOG_OPEN_PROC_TOKEN, pass -Token, or create runtime\control\dog_open_proc_config.json."
 }
 
 function Convert-ToArraySafe {
     [CmdletBinding()]
-    param(
-        [AllowNull()]
-        [object]$Value
-    )
+    param([AllowNull()][object]$Value)
 
     if ($null -eq $Value) {
         return @()
@@ -185,10 +281,7 @@ function Convert-ToArraySafe {
 
 function Convert-DogOpenProcResponseRows {
     [CmdletBinding()]
-    param(
-        [AllowNull()]
-        [object]$Response
-    )
+    param([AllowNull()][object]$Response)
 
     if ($null -eq $Response) {
         return @()
@@ -258,21 +351,14 @@ function Convert-DogOpenProcResponseRows {
 function Invoke-DogOpenProc {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$DatabaseKey,
-
-        [Parameter(Mandatory = $true)]
-        [string]$Sql,
-
+        [Parameter(Mandatory = $true)][string]$DatabaseKey,
+        [Parameter(Mandatory = $true)][string]$Sql,
         [object[]]$Params = @(),
-
         [string]$Endpoint = "",
-
         [string]$Token = "",
-
         [int]$TimeoutSec = 30,
-
-        [hashtable]$ExtraBody = @{}
+        [hashtable]$ExtraBody = @{},
+        [string]$ConfigPath = ""
     )
 
     if ([string]::IsNullOrWhiteSpace($DatabaseKey)) {
@@ -283,8 +369,8 @@ function Invoke-DogOpenProc {
         throw "Sql is required."
     }
 
-    $resolvedEndpoint = Resolve-DogOpenProcEndpoint -Endpoint $Endpoint
-    $resolvedToken = Resolve-DogOpenProcToken -Token $Token
+    $resolvedEndpoint = Resolve-DogOpenProcEndpoint -Endpoint $Endpoint -DatabaseKey $DatabaseKey -ConfigPath $ConfigPath
+    $resolvedToken = Resolve-DogOpenProcToken -Token $Token -DatabaseKey $DatabaseKey -ConfigPath $ConfigPath
 
     $body = [ordered]@{
         token = $resolvedToken
@@ -314,33 +400,26 @@ function Invoke-DogOpenProc {
         return $response
     }
     catch {
-        throw "Invoke-DogOpenProc failed: $($_.Exception.Message)"
+        throw "Invoke-DogOpenProc failed: endpoint=$resolvedEndpoint database_key=$DatabaseKey message=$($_.Exception.Message)"
     }
 }
 
 function Invoke-ReadOnlyDbQuery {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$DatabaseKey,
-
-        [Parameter(Mandatory = $true)]
-        [string]$Sql,
-
+        [Parameter(Mandatory = $true)][string]$DatabaseKey,
+        [Parameter(Mandatory = $true)][string]$Sql,
         [object[]]$Params = @(),
-
         [string]$Endpoint = "",
-
         [string]$Token = "",
-
         [int]$TimeoutSec = 30,
-
-        [hashtable]$ExtraBody = @{}
+        [hashtable]$ExtraBody = @{},
+        [string]$ConfigPath = ""
     )
 
     [void](Test-ReadOnlySql -Sql $Sql)
 
-    $resolvedEndpoint = Resolve-DogOpenProcEndpoint -Endpoint $Endpoint
+    $resolvedEndpoint = Resolve-DogOpenProcEndpoint -Endpoint $Endpoint -DatabaseKey $DatabaseKey -ConfigPath $ConfigPath
 
     $response = Invoke-DogOpenProc `
         -DatabaseKey $DatabaseKey `
@@ -349,7 +428,8 @@ function Invoke-ReadOnlyDbQuery {
         -Endpoint $resolvedEndpoint `
         -Token $Token `
         -TimeoutSec $TimeoutSec `
-        -ExtraBody $ExtraBody
+        -ExtraBody $ExtraBody `
+        -ConfigPath $ConfigPath
 
     $rows = Convert-DogOpenProcResponseRows -Response $response
 
@@ -365,10 +445,7 @@ function Invoke-ReadOnlyDbQuery {
 
 function Get-FirstDbQueryRow {
     [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]
-        [object]$QueryResult
-    )
+    param([Parameter(Mandatory = $true)][object]$QueryResult)
 
     if ($null -eq $QueryResult) {
         return $null
@@ -389,6 +466,7 @@ function Get-FirstDbQueryRow {
 
 Export-ModuleMember -Function `
     Test-ReadOnlySql, `
+    Get-DogOpenProcConfig, `
     Resolve-DogOpenProcEndpoint, `
     Resolve-DogOpenProcToken, `
     Convert-DogOpenProcResponseRows, `
