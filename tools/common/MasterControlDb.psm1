@@ -312,6 +312,39 @@ function Write-McVodStreamsDeltaImportPreviewRow {
         -PreviewOnly:$PreviewOnly
 }
 
+
+function Write-McVodStreamsDeltaLimitedApplySummary {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][hashtable]$Summary,
+        [hashtable]$SourceMeta = @{},
+        [switch]$PreviewOnly
+    )
+
+    $values = Merge-McValues -Primary $Summary -Secondary $SourceMeta
+
+    return Write-McTableRow `
+        -TableName "mc_vod_streams_delta_limited_apply_summary" `
+        -Values $values `
+        -PreviewOnly:$PreviewOnly
+}
+
+function Write-McVodStreamsDeltaLimitedApplyRow {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)][hashtable]$ApplyRow,
+        [hashtable]$SourceMeta = @{},
+        [switch]$PreviewOnly
+    )
+
+    $values = Merge-McValues -Primary $ApplyRow -Secondary $SourceMeta
+
+    return Write-McTableRow `
+        -TableName "mc_vod_streams_delta_limited_apply" `
+        -Values $values `
+        -PreviewOnly:$PreviewOnly
+}
+
 function Get-McDashboardCardSql {
     [CmdletBinding()]
     param()
@@ -428,4 +461,6 @@ Export-ModuleMember -Function `
     Write-McProviderSnapshotGovernedImportRunnerRow, `
     Write-McVodStreamsDeltaImportPreviewSummary, `
     Write-McVodStreamsDeltaImportPreviewRow, `
+    Write-McVodStreamsDeltaLimitedApplySummary, `
+    Write-McVodStreamsDeltaLimitedApplyRow, `
     Get-McDashboardCardSql
