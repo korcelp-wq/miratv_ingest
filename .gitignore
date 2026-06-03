@@ -88,3 +88,6 @@ __pycache__/
 runtime/
 runtime/
 runtime/
+
+# Local operational scripts and secrets
+local/
