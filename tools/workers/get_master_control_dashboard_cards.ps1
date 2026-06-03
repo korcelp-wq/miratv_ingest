@@ -125,7 +125,7 @@ SELECT
   ingest_id
 FROM xpdgxfsp_content.v_mc_dashboard_cards
 ORDER BY
-  FIELD(card,'spine_runner','delta_plan','governed_import_runner','vod_preview','vod_apply');
+  FIELD(card,'spine_runner','delta_plan','governed_import_runner','vod_preview','vod_apply','epg_db_import');
 "@
     }
 
@@ -243,3 +243,4 @@ catch {
     Write-Error "FAILED: Master Control dashboard card read failed. run_id=$script:RunId $errorMessage"
     exit 1
 }
+

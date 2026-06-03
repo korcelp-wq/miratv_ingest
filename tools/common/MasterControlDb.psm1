@@ -441,7 +441,43 @@ FROM (
   FROM xpdgxfsp_content.mc_vod_streams_delta_limited_apply_summary
   ORDER BY ingest_id DESC
   LIMIT 1
-) e;
+) e
+
+UNION ALL
+
+SELECT *
+FROM (
+  SELECT
+    'epg_db_import' AS card,
+    status,
+    stage_key AS lane_or_component,
+    environment AS provider_label,
+    CAST(
+      COALESCE(
+        CASE
+          WHEN JSON_VALID(metrics_json) THEN JSON_UNQUOTE(JSON_EXTRACT(metrics_json, '$.freshness.currently_active_programs'))
+          ELSE NULL
+        END,
+        ''
+      ) AS CHAR
+    ) AS primary_count,
+    CAST(
+      COALESCE(
+        CASE
+          WHEN JSON_VALID(metrics_json) THEN JSON_UNQUOTE(JSON_EXTRACT(metrics_json, '$.freshness.future_programs'))
+          ELSE NULL
+        END,
+        ''
+      ) AS CHAR
+    ) AS secondary_count,
+    'active / future EPG' AS metric_label,
+    event_at AS event_time,
+    COALESCE(summary_json, report_csv) AS artifact
+  FROM xpdgxfsp_content.v_spine_worker_latest_status
+  WHERE worker_key = 'epg_db_import_upsert'
+    AND stage_key = 'media_refresh.epg.import'
+  LIMIT 1
+) f;
 "@
 }
 
@@ -464,3 +500,4 @@ Export-ModuleMember -Function `
     Write-McVodStreamsDeltaLimitedApplySummary, `
     Write-McVodStreamsDeltaLimitedApplyRow, `
     Get-McDashboardCardSql
+
