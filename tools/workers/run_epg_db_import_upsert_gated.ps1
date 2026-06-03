@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  EPG Gate 3: Import/upsert database only.
+  EPG Gate 3: Import/upsert database only, with spine logging.
 
 .DESCRIPTION
   Retries the database import/upsert loop against the existing server-side EPG file:
@@ -10,6 +10,12 @@
 
   Use this when the XML file is already on the server and only the DB upsert/import
   needs to be retried or continued.
+
+  Spine logging:
+    - Writes DB-backed events through xpdgxfsp_content.sp_record_spine_worker_event
+      when the DB logging objects are installed.
+    - By default, spine logging failure is warning-only so the EPG import path is not blocked.
+    - Use -RequireSpineDbLogging to make missing/broken logging a hard gate failure.
 
 .NOTES
   Default behavior resets the importer offset once, then imports to completion.
@@ -33,7 +39,9 @@ param(
     [string]$RepoRoot = "",
     [string]$WorkerKey = "epg_db_import_upsert",
     [string]$StageKey = "media_refresh.epg.import",
-    [switch]$FailIfMaxRunsReachedWithFullBatch
+    [switch]$FailIfMaxRunsReachedWithFullBatch,
+    [switch]$DisableSpineDbLogging,
+    [switch]$RequireSpineDbLogging
 )
 
 Set-StrictMode -Version Latest
@@ -64,6 +72,81 @@ function Get-JsonPropertyValue {
     param([object]$Object, [string]$Name, [object]$DefaultValue = $null)
     if (Test-JsonProperty -Object $Object -Name $Name) { return $Object.$Name }
     return $DefaultValue
+}
+
+function ConvertTo-CompactJson {
+    param([object]$Value)
+
+    if ($null -eq $Value) { return "" }
+    return ($Value | ConvertTo-Json -Depth 12 -Compress)
+}
+
+function ConvertTo-SqlString {
+    param([object]$Value)
+
+    if ($null -eq $Value) { return "NULL" }
+
+    $textValue = [string]$Value
+    if ([string]::IsNullOrWhiteSpace($textValue)) { return "NULL" }
+
+    return "'" + ($textValue.Replace("'", "''")) + "'"
+}
+
+function Invoke-SpineEvent {
+    param(
+        [string]$EventType,
+        [string]$Status,
+        [string]$SignalKey,
+        [string]$Disposition,
+        [object]$Metrics = $null,
+        [string]$ReportCsvPath = "",
+        [string]$SummaryJsonPath = "",
+        [string]$ErrorMessage = ""
+    )
+
+    if ($DisableSpineDbLogging) {
+        return
+    }
+
+    $module = Join-Path $RepoRoot "tools\common\DbQuery.psm1"
+
+    try {
+        if (-not (Test-Path -LiteralPath $module)) {
+            throw "DbQuery module not found: $module"
+        }
+
+        Import-Module $module -Force
+
+        $metricsJson = ConvertTo-CompactJson -Value $Metrics
+
+        $sql = @"
+CALL xpdgxfsp_content.sp_record_spine_worker_event(
+  $(ConvertTo-SqlString $RunId),
+  $(ConvertTo-SqlString $WorkerKey),
+  $(ConvertTo-SqlString $StageKey),
+  $(ConvertTo-SqlString $Environment),
+  $(ConvertTo-SqlString $Status),
+  $(ConvertTo-SqlString $EventType),
+  $(ConvertTo-SqlString $SignalKey),
+  $(ConvertTo-SqlString $Disposition),
+  $(ConvertTo-SqlString $metricsJson),
+  $(ConvertTo-SqlString $ReportCsvPath),
+  $(ConvertTo-SqlString $SummaryJsonPath),
+  $(ConvertTo-SqlString $ErrorMessage)
+);
+"@
+
+        Invoke-DogOpenProc -DatabaseKey "content" -Sql $sql -TimeoutSec 120 | Out-Null
+    }
+    catch {
+        $message = "spine logging failed: $($_.Exception.Message)"
+
+        if ($RequireSpineDbLogging) {
+            throw $message
+        }
+
+        Write-Warning $message
+    }
 }
 
 function Get-SecretToken {
@@ -182,10 +265,22 @@ function Get-ImportAggregateMetrics {
         last_processed_this_run = $lastProcessed
         import_limit = $ImportLimit
         max_import_runs = $MaxImportRuns
+        reset_ran = (-not $NoReset)
+        no_reset = [bool]$NoReset
     }
 }
 
 try {
+    Invoke-SpineEvent -EventType "signal" -Status "running" -SignalKey "epg_db_import_started" -Disposition "db_import_started" -Metrics ([pscustomobject]@{
+        import_url = $ImportUrl
+        import_limit = $ImportLimit
+        max_import_runs = $MaxImportRuns
+        no_reset = [bool]$NoReset
+        skip_db_freshness_check = [bool]$SkipDbFreshnessCheck
+        skip_live_cache_enrichment = [bool]$SkipLiveCacheEnrichment
+        mac_user_id = $MacUserId
+    })
+
     $token = Get-SecretToken -Provided $IngestToken
 
     $resetJson = $null
@@ -203,11 +298,20 @@ try {
                 $resetJson | Format-List
                 Assert-ImportResponseOk -Json $resetJson -StepName "import_reset" -RequireProcessed
                 $resetOk = $true
+
+                Invoke-SpineEvent -EventType "heartbeat" -Status "running" -SignalKey "epg_db_import_reset_completed" -Disposition "reset_once_completed" -Metrics $resetJson
+
                 break
             }
             catch {
                 $lastResetError = $_.Exception.Message
                 Write-Host "[import_reset] Not ready yet: $lastResetError" -ForegroundColor Yellow
+
+                Invoke-SpineEvent -EventType "heartbeat" -Status "running" -SignalKey "epg_db_import_reset_retry" -Disposition "reset_retry" -Metrics ([pscustomobject]@{
+                    attempt = $resetAttempt
+                    max_attempts = $ImportResetRetryCount
+                    error = $lastResetError
+                })
 
                 if ($resetAttempt -lt $ImportResetRetryCount) {
                     Start-Sleep -Seconds $ImportResetRetrySeconds
@@ -221,6 +325,7 @@ try {
     }
     else {
         Write-Host "[import_reset] Skipped because -NoReset was supplied."
+        Invoke-SpineEvent -EventType "heartbeat" -Status "running" -SignalKey "epg_db_import_reset_skipped" -Disposition "no_reset_requested" -Metrics @{ no_reset = $true }
     }
 
     $completedNaturally = $false
@@ -247,6 +352,17 @@ try {
         $ImportRows.Add($row) | Out-Null
         $row | Format-List
 
+        Invoke-SpineEvent -EventType "heartbeat" -Status "running" -SignalKey "epg_db_import_loop_heartbeat" -Disposition "import_loop_running" -Metrics ([pscustomobject]@{
+            run_number = $i
+            max_import_runs = $MaxImportRuns
+            starting_offset = $row.starting_offset
+            next_offset = $row.next_offset
+            processed_this_run = $row.processed_this_run
+            inserted_this_run = $row.inserted_this_run
+            batches = $row.batches
+            import_limit = $ImportLimit
+        }) -ReportCsvPath $ReportCsv
+
         if (-not [string]::IsNullOrWhiteSpace([string]$row.error)) {
             throw "EPG import error: $($row.error)"
         }
@@ -267,6 +383,7 @@ try {
     $ImportRows | Export-Csv -Path $ReportCsv -NoTypeInformation -Encoding UTF8
 
     if ($maxRunsReachedWithFullBatch -and $FailIfMaxRunsReachedWithFullBatch) {
+        Invoke-SpineEvent -EventType "signal" -Status "fail" -SignalKey "epg_db_import_incomplete" -Disposition "max_runs_reached_with_full_batch" -Metrics (Get-ImportAggregateMetrics) -ReportCsvPath $ReportCsv
         throw "MaxImportRuns reached while last batch was full. Import may be incomplete. Increase -MaxImportRuns or rerun with -NoReset."
     }
 
@@ -274,6 +391,8 @@ try {
     if (-not $SkipDbFreshnessCheck) {
         $freshness = Invoke-DbFreshnessCheck -RepoRoot $RepoRoot
         $freshness | Format-List
+
+        Invoke-SpineEvent -EventType "heartbeat" -Status "running" -SignalKey "epg_db_import_freshness_checked" -Disposition "freshness_checked" -Metrics $freshness -ReportCsvPath $ReportCsv
     }
 
     if (-not $SkipLiveCacheEnrichment) {
@@ -286,9 +405,16 @@ try {
 
         if ($shouldEnrich) {
             Invoke-LiveCacheEnrichment -RepoRoot $RepoRoot -MacUserId $MacUserId | Out-Null
+
+            Invoke-SpineEvent -EventType "signal" -Status "running" -SignalKey "epg_live_cache_enriched" -Disposition "enrichment_called" -Metrics ([pscustomobject]@{
+                mac_user_id = $MacUserId
+                freshness = $freshness
+            }) -ReportCsvPath $ReportCsv
         }
         else {
             Write-Host "[live_cache_enrichment] Skipped: no current or future EPG rows."
+
+            Invoke-SpineEvent -EventType "signal" -Status "skipped" -SignalKey "epg_pipeline_stale" -Disposition "no_current_or_future_epg_to_enrich" -Metrics $freshness -ReportCsvPath $ReportCsv
         }
     }
 
@@ -314,6 +440,17 @@ try {
     }
 
     $summary | ConvertTo-Json -Depth 12 | Set-Content -Path $SummaryJson -Encoding UTF8
+
+    $finalMetrics = [pscustomobject]@{
+        import = Get-ImportAggregateMetrics
+        freshness = $freshness
+        completed_naturally = $completedNaturally
+        max_runs_reached_with_full_batch = $maxRunsReachedWithFullBatch
+        mac_user_id = $MacUserId
+    }
+
+    Invoke-SpineEvent -EventType "signal" -Status "pass" -SignalKey "epg_db_import_completed" -Disposition $disposition -Metrics $finalMetrics -ReportCsvPath $ReportCsv -SummaryJsonPath $SummaryJson
+
     $summary | Format-List run_id,worker_key,stage_key,status,disposition,report_csv,summary_json
     exit 0
 }
@@ -336,6 +473,9 @@ catch {
     }
 
     $summary | ConvertTo-Json -Depth 12 | Set-Content -Path $SummaryJson -Encoding UTF8
+
+    Invoke-SpineEvent -EventType "signal" -Status "fail" -SignalKey "epg_db_import_failed" -Disposition "db_import_failed" -Metrics (Get-ImportAggregateMetrics) -ReportCsvPath $ReportCsv -SummaryJsonPath $SummaryJson -ErrorMessage $message
+
     Write-Error $message
     exit 1
 }
