@@ -208,3 +208,4 @@
 "series_top_level_delta_plan_completed","P0.5","series_ingest","Series Ingest","Series Ingest","","","","series_ingest","","",""
 "series_top_level_delta_preview_completed","P0.5","series_ingest","Series Ingest","Series Ingest","","","","series_ingest","","",""
 "series_top_level_delta_apply_completed","P0.5","series_ingest","Series Ingest","Series Ingest","","","","series_ingest","","",""
+home_media_shelf_cache_refresh_completed,P0.5,home_media_shelf_cache,Home Cache,home.media.shelf.cache.refresh,daily,24h,status=fail,Content Ops,ENABLE_HOME_MEDIA_SHELF_CACHE_REFRESH,Disable home media shelf cache refresh,true

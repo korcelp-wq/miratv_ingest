@@ -208,3 +208,4 @@
 "series_top_level_delta_plan_completed","P0.5","Series top-level delta plan completed.","completion","","series_ingest","","Series Ingest","","","","series_ingest",""
 "series_top_level_delta_preview_completed","P0.5","Series top-level delta preview completed.","completion","","series_ingest","","Series Ingest","","","","series_ingest",""
 "series_top_level_delta_apply_completed","P0.5","Series top-level delta limited apply completed.","completion","","series_ingest","","Series Ingest","","","","series_ingest",""
+home_media_shelf_cache_refresh_completed,P0.5,Home media shelf cache refresh completion status,string,pass|warning|fail|disabled,home_media_shelf_cache,tools/workers/refresh_home_media_shelf_cache.ps1,Home Cache,daily,24h,status=fail,Content Ops,Prebuilds Home Movies/Series shelf cache for fast Android Home rendering

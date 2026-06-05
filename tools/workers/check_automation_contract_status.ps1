@@ -748,6 +748,13 @@ try {
             RequiredKillSwitch = "ENABLE_VOD_DELTA_PREVIEW_ITEM_SOURCE_FIX_PLANNER"
         },
         @{
+            Name = "refresh_home_media_shelf_cache"
+            Path = "tools\workers\refresh_home_media_shelf_cache.ps1"
+            Recurring = $true
+            RequiredSignals = @("home_media_shelf_cache_refresh_completed", "worker_heartbeat_status")
+            RequiredKillSwitch = "ENABLE_HOME_MEDIA_SHELF_CACHE_REFRESH"
+        },
+        @{
             Name = "check_grinder_disposition_contract"
             Path = "tools\workers\check_grinder_disposition_contract.ps1"
             Recurring = $false
@@ -1029,6 +1036,7 @@ catch {
     Write-Error "FAILED: contract checker failed. run_id=$script:RunId error=$message"
     exit 1
 }
+
 
 
 
