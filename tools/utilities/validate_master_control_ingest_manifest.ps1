@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Validates the Master_Control ingest manifest against the current-system folder.
 
@@ -333,8 +333,12 @@ foreach ($laneName in $laneNames) {
             -ParentStep $stepLabel `
             -CurrentRoot $CurrentRoot `
             -IncludeServerPaths:$IncludeServerPaths
+        $subfiles = @()
+        if ($step.PSObject.Properties.Name -contains "subfiles") {
+            $subfiles = Convert-ToArrayLocal -Value $step.subfiles
+        }
 
-        foreach ($sub in Convert-ToArrayLocal -Value $step.subfiles) {
+        foreach ($sub in $subfiles) {
             $rows += Test-ManifestPathEntry `
                 -Entry $sub `
                 -Lane $laneName `
@@ -371,3 +375,4 @@ if ($missing -gt 0) {
         Select-Object lane, parent_step, sub_order, role, uploaded_file, current_absolute_path |
         Format-Table -AutoSize
 }
+

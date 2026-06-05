@@ -1,6 +1,6 @@
 ﻿{
     "manifest_name":  "master_control_ingest_manifest",
-    "version":  "2026-05-29Tprovider-pull-spine",
+    "version":  "2026-06-01Tgoverned-epg-pipeline",
     "current_system_root":  "C:\\miratv_ingest",
     "clean_system_root":  "C:\\miraTV_ingest_clean",
     "nomenclature_rule":  {
@@ -10,442 +10,259 @@
                           },
     "series_lane":  [
                         {
-                            "step_order":  1,
+                            "lane":  "series_ingest",
+                            "step_order":  "1",
                             "parent_file_uploaded":  "00_series_pipeline_trigger1.ps1",
                             "actual_file_hint":  "00_series_pipeline_trigger.ps1",
                             "current_relative_path":  "triggers\\00_series_pipeline_trigger.ps1",
                             "current_absolute_path":  "C:\\miratv_ingest\\triggers\\00_series_pipeline_trigger.ps1",
                             "role":  "series_pipeline_trigger",
-                            "lane":  "series_ingest",
                             "execution_type":  "trigger",
                             "purpose":  "Trigger remote series pipeline and capture/track series pipeline output.",
-                            "subfiles":  [
-                                             {
-                                                 "sub_order":  1,
-                                                 "uploaded_file":  "series_pipeline1-1.php",
-                                                 "actual_file_hint":  "series_pipeline.php",
-                                                 "current_relative_path":  "_workers\\series_pipeline.php",
-                                                 "current_absolute_path":  "server:/home/xpdgxfsp/public_html/miratv.club/_workers/series_pipeline.php",
-                                                 "role":  "server_side_pipeline_worker",
-                                                 "purpose":  "Remote PHP series pipeline endpoint."
-                                             }
-                                         ],
+                            "subfile_count":  "1",
+                            "subfiles_uploaded":  "series_pipeline1-1.php",
                             "clean_repo_target":  "review_before_migration",
                             "migration_status":  "current_system_evidence",
                             "contract_gap":  "needs governed logging/signal/kill-switch if migrated",
                             "secret_risk":  "possible_endpoint_token_or_provider_context"
                         },
                         {
-                            "step_order":  3,
+                            "lane":  "series_ingest",
+                            "step_order":  "3",
                             "parent_file_uploaded":  "03_raw_router_trigger3.ps1",
                             "actual_file_hint":  "03_raw_router_trigger.ps1",
                             "current_relative_path":  "triggers\\03_raw_router_trigger.ps1",
                             "current_absolute_path":  "C:\\miratv_ingest\\triggers\\03_raw_router_trigger.ps1",
                             "role":  "raw_router_trigger",
-                            "lane":  "series_ingest",
                             "execution_type":  "trigger",
                             "purpose":  "Invoke raw router worker to classify and route raw payloads.",
-                            "subfiles":  [
-                                             {
-                                                 "sub_order":  1,
-                                                 "uploaded_file":  "raw_router_worker3-1.ps1",
-                                                 "actual_file_hint":  "raw_router_worker.ps1",
-                                                 "current_relative_path":  "workers\\raw_router_worker.ps1",
-                                                 "current_absolute_path":  "C:\\miratv_ingest\\workers\\raw_router_worker.ps1",
-                                                 "role":  "local_worker",
-                                                 "purpose":  "Route raw payloads into pickup/default, pickup/arrays, or quarantine lanes."
-                                             }
-                                         ],
+                            "subfile_count":  "1",
+                            "subfiles_uploaded":  "raw_router_worker3-1.ps1",
                             "clean_repo_target":  "candidate_worker_after_review",
                             "migration_status":  "current_system_evidence",
                             "contract_gap":  "needs logging/signal/kill-switch contract",
                             "secret_risk":  "low_to_unknown"
                         },
                         {
-                            "step_order":  4,
+                            "lane":  "series_ingest",
+                            "step_order":  "4",
                             "parent_file_uploaded":  "01_series_grinder_trigger4.bat",
                             "actual_file_hint":  "01_series_grinder_trigger.bat",
                             "current_relative_path":  "triggers\\01_series_grinder_trigger.bat",
                             "current_absolute_path":  "C:\\miratv_ingest\\triggers\\01_series_grinder_trigger.bat",
                             "role":  "series_grinder_batch_trigger",
-                            "lane":  "series_ingest",
                             "execution_type":  "batch_trigger",
                             "purpose":  "Run local series grinder workers that split raw provider payloads into structured JSON fragments.",
-                            "subfiles":  [
-                                             {
-                                                 "sub_order":  1,
-                                                 "uploaded_file":  "series_grinder.ps1",
-                                                 "actual_file_hint":  "series_grinder.ps1",
-                                                 "current_relative_path":  "workers\\series_grinder.ps1",
-                                                 "current_absolute_path":  "C:\\miratv_ingest\\workers\\series_grinder.ps1",
-                                                 "role":  "local_worker",
-                                                 "purpose":  "Extract primary series records."
-                                             },
-                                             {
-                                                 "sub_order":  2,
-                                                 "uploaded_file":  "series_grinder_2_series_ext.ps1",
-                                                 "actual_file_hint":  "series_grinder_2_series_ext.ps1",
-                                                 "current_relative_path":  "workers\\series_grinder_2_series_ext.ps1",
-                                                 "current_absolute_path":  "C:\\miratv_ingest\\workers\\series_grinder_2_series_ext.ps1",
-                                                 "role":  "local_worker",
-                                                 "purpose":  "Extract series extension/detail records."
-                                             },
-                                             {
-                                                 "sub_order":  3,
-                                                 "uploaded_file":  "series_grinder_3_seasons.ps1",
-                                                 "actual_file_hint":  "series_grinder_3_seasons.ps1",
-                                                 "current_relative_path":  "workers\\series_grinder_3_seasons.ps1",
-                                                 "current_absolute_path":  "C:\\miratv_ingest\\workers\\series_grinder_3_seasons.ps1",
-                                                 "role":  "local_worker",
-                                                 "purpose":  "Extract seasons records."
-                                             },
-                                             {
-                                                 "sub_order":  4,
-                                                 "uploaded_file":  "series_grinder_4_season_ext.ps1",
-                                                 "actual_file_hint":  "series_grinder_4_season_ext.ps1",
-                                                 "current_relative_path":  "workers\\series_grinder_4_season_ext.ps1",
-                                                 "current_absolute_path":  "C:\\miratv_ingest\\workers\\series_grinder_4_season_ext.ps1",
-                                                 "role":  "local_worker",
-                                                 "purpose":  "Extract season extension/detail records."
-                                             },
-                                             {
-                                                 "sub_order":  5,
-                                                 "uploaded_file":  "series_grinder_5_episodes.ps1",
-                                                 "actual_file_hint":  "series_grinder_5_episodes.ps1",
-                                                 "current_relative_path":  "workers\\series_grinder_5_episodes.ps1",
-                                                 "current_absolute_path":  "C:\\miratv_ingest\\workers\\series_grinder_5_episodes.ps1",
-                                                 "role":  "local_worker",
-                                                 "purpose":  "Extract episode records."
-                                             },
-                                             {
-                                                 "sub_order":  6,
-                                                 "uploaded_file":  "series_grinder_5_nested _brackets_episodes.ps1",
-                                                 "actual_file_hint":  "series_grinder_5_nested _brackets_episodes.ps1",
-                                                 "current_relative_path":  "workers\\series_grinder_5_nested _brackets_episodes.ps1",
-                                                 "current_absolute_path":  "C:\\miratv_ingest\\workers\\series_grinder_5_nested _brackets_episodes.ps1",
-                                                 "role":  "local_worker_variant",
-                                                 "purpose":  "Handle nested/bracketed episode payload variants."
-                                             },
-                                             {
-                                                 "sub_order":  7,
-                                                 "uploaded_file":  "series_grinder_6_cleaner.ps1",
-                                                 "actual_file_hint":  "series_grinder_6_cleaner.ps1",
-                                                 "current_relative_path":  "workers\\series_grinder_6_cleaner.ps1",
-                                                 "current_absolute_path":  "C:\\miratv_ingest\\workers\\series_grinder_6_cleaner.ps1",
-                                                 "role":  "local_worker",
-                                                 "purpose":  "Cleanup/quarantine/move processed grinder inputs."
-                                             }
-                                         ],
+                            "subfile_count":  "7",
+                            "subfiles_uploaded":  "series_grinder.ps1; series_grinder_2_series_ext.ps1; series_grinder_3_seasons.ps1; series_grinder_4_season_ext.ps1; series_grinder_5_episodes.ps1; series_grinder_5_nested _brackets_episodes.ps1; series_grinder_6_cleaner.ps1",
                             "clean_repo_target":  "candidate_composite_worker_or_subcomponents_after_review",
                             "migration_status":  "current_system_evidence",
                             "contract_gap":  "needs governed orchestration and subcomponent logging if migrated",
                             "secret_risk":  "low_to_unknown"
                         },
                         {
-                            "step_order":  5,
+                            "lane":  "series_ingest",
+                            "step_order":  "5",
                             "parent_file_uploaded":  "02_series_grinder_arrays_trigger5.ps1",
                             "actual_file_hint":  "02_series_grinder_arrays_trigger.ps1",
                             "current_relative_path":  "triggers\\02_series_grinder_arrays_trigger.ps1",
                             "current_absolute_path":  "C:\\miratv_ingest\\triggers\\02_series_grinder_arrays_trigger.ps1",
                             "role":  "array_grinder_trigger",
-                            "lane":  "series_ingest",
                             "execution_type":  "trigger",
                             "purpose":  "Normalize and process array-shaped raw payloads.",
-                            "subfiles":  [
-                                             {
-                                                 "sub_order":  1,
-                                                 "uploaded_file":  "raw_local_normalizer5-1.ps1",
-                                                 "actual_file_hint":  "raw_local_normalizer.ps1",
-                                                 "current_relative_path":  "workers\\raw_local_normalizer.ps1",
-                                                 "current_absolute_path":  "C:\\miratv_ingest\\workers\\raw_local_normalizer.ps1",
-                                                 "role":  "local_worker",
-                                                 "purpose":  "Normalize raw local payloads into normalized form."
-                                             },
-                                             {
-                                                 "sub_order":  2,
-                                                 "uploaded_file":  "series_grinder_arrays5-2.ps1",
-                                                 "actual_file_hint":  "series_grinder_arrays.ps1",
-                                                 "current_relative_path":  "workers\\series_grinder_arrays.ps1",
-                                                 "current_absolute_path":  "C:\\miratv_ingest\\workers\\series_grinder_arrays.ps1",
-                                                 "role":  "local_worker",
-                                                 "purpose":  "Grind array-shaped payloads into structured fragments."
-                                             }
-                                         ],
+                            "subfile_count":  "2",
+                            "subfiles_uploaded":  "raw_local_normalizer5-1.ps1; series_grinder_arrays5-2.ps1",
                             "clean_repo_target":  "candidate_worker_after_review",
                             "migration_status":  "current_system_evidence",
                             "contract_gap":  "needs logging/signal/kill-switch contract",
                             "secret_risk":  "low_to_unknown"
                         },
                         {
-                            "step_order":  6,
+                            "lane":  "series_ingest",
+                            "step_order":  "6",
                             "parent_file_uploaded":  "04_raw_ingest_trigger6.ps1",
                             "actual_file_hint":  "04_raw_ingest_trigger.ps1",
                             "current_relative_path":  "triggers\\04_raw_ingest_trigger.ps1",
                             "current_absolute_path":  "C:\\miratv_ingest\\triggers\\04_raw_ingest_trigger.ps1",
                             "role":  "raw_ingest_trigger_pass1",
-                            "lane":  "series_ingest",
                             "execution_type":  "remote_trigger",
                             "purpose":  "Call server-side ingest_series_files pass.",
-                            "subfiles":  [
-                                             {
-                                                 "sub_order":  1,
-                                                 "uploaded_file":  "ingest_series_files6-1.php",
-                                                 "actual_file_hint":  "ingest_series_files.php",
-                                                 "current_relative_path":  "_workers\\ingest_series_files.php",
-                                                 "current_absolute_path":  "server:/home/xpdgxfsp/public_html/miratv.club/_workers/ingest_series_files.php",
-                                                 "role":  "server_side_ingest_worker",
-                                                 "purpose":  "Server-side ingest of filename-addressable series JSON fragments."
-                                             }
-                                         ],
+                            "subfile_count":  "1",
+                            "subfiles_uploaded":  "ingest_series_files6-1.php",
                             "clean_repo_target":  "server_worker_contract_review",
                             "migration_status":  "current_system_evidence",
                             "contract_gap":  "PHP logging/signal/kill-switch adapter needed if governed",
                             "secret_risk":  "token_risk"
                         },
                         {
-                            "step_order":  7,
+                            "lane":  "series_ingest",
+                            "step_order":  "7",
                             "parent_file_uploaded":  "05_raw_ingest_pass2_trigger7.ps1",
                             "actual_file_hint":  "05_raw_ingest_pass2_trigger.ps1",
                             "current_relative_path":  "triggers\\05_raw_ingest_pass2_trigger.ps1",
                             "current_absolute_path":  "C:\\miratv_ingest\\triggers\\05_raw_ingest_pass2_trigger.ps1",
                             "role":  "raw_ingest_trigger_pass2",
-                            "lane":  "series_ingest",
                             "execution_type":  "remote_trigger",
                             "purpose":  "Call server-side run_two series-detail ingest pass.",
-                            "subfiles":  [
-                                             {
-                                                 "sub_order":  1,
-                                                 "uploaded_file":  "ingest_series run_two7-1.php",
-                                                 "actual_file_hint":  "ingest_series run_two.php",
-                                                 "current_relative_path":  "_workers\\ingest_series run_two.php",
-                                                 "current_absolute_path":  "server:/home/xpdgxfsp/public_html/miratv.club/_workers/ingest_series run_two.php",
-                                                 "role":  "server_side_ingest_worker",
-                                                 "purpose":  "Server-side second-pass ingest for series details."
-                                             }
-                                         ],
+                            "subfile_count":  "1",
+                            "subfiles_uploaded":  "ingest_series run_two7-1.php",
                             "clean_repo_target":  "server_worker_contract_review",
                             "migration_status":  "current_system_evidence",
                             "contract_gap":  "PHP logging/signal/kill-switch adapter needed if governed",
                             "secret_risk":  "token_risk"
                         },
                         {
-                            "step_order":  8,
+                            "lane":  "series_ingest",
+                            "step_order":  "8",
                             "parent_file_uploaded":  "06_upload_trigger8.bat",
                             "actual_file_hint":  "06_upload_trigger.bat",
                             "current_relative_path":  "triggers\\06_upload_trigger.bat",
                             "current_absolute_path":  "C:\\miratv_ingest\\triggers\\06_upload_trigger.bat",
                             "role":  "upload_trigger",
-                            "lane":  "series_ingest",
                             "execution_type":  "batch_trigger",
                             "purpose":  "Upload generated JSON artifacts from series_sep to remote raw_store and move completed files to processed.",
-                            "subfiles":  [
-
-                                         ],
+                            "subfile_count":  "0",
+                            "subfiles_uploaded":  "",
                             "clean_repo_target":  "rewrite_required_before_migration",
                             "migration_status":  "current_system_evidence",
                             "contract_gap":  "needs secure credential handling, logging, signal, bounded retry",
                             "secret_risk":  "high_credential_risk"
                         },
                         {
-                            "step_order":  9,
+                            "lane":  "series_ingest",
+                            "step_order":  "9",
                             "parent_file_uploaded":  "4-2raw_ingest_trigger9.ps1",
                             "actual_file_hint":  "4-2raw_ingest_trigger.ps1",
                             "current_relative_path":  "triggers\\4-2raw_ingest_trigger.ps1",
                             "current_absolute_path":  "C:\\miratv_ingest\\triggers\\4-2raw_ingest_trigger.ps1",
                             "role":  "raw_ingest_trigger_details_first",
-                            "lane":  "series_ingest",
                             "execution_type":  "remote_trigger",
                             "purpose":  "Additional/details-first server-side ingest pass.",
-                            "subfiles":  [
-                                             {
-                                                 "sub_order":  1,
-                                                 "uploaded_file":  "ingest_series run_two9-1.php",
-                                                 "actual_file_hint":  "ingest_series run_two.php",
-                                                 "current_relative_path":  "_workers\\ingest_series run_two.php",
-                                                 "current_absolute_path":  "server:/home/xpdgxfsp/public_html/miratv.club/_workers/ingest_series run_two.php",
-                                                 "role":  "server_side_ingest_worker",
-                                                 "purpose":  "Server-side details-first ingest."
-                                             }
-                                         ],
+                            "subfile_count":  "1",
+                            "subfiles_uploaded":  "ingest_series run_two9-1.php",
                             "clean_repo_target":  "server_worker_contract_review",
                             "migration_status":  "current_system_evidence",
                             "contract_gap":  "PHP logging/signal/kill-switch adapter needed if governed",
                             "secret_risk":  "token_risk"
                         },
                         {
-                            "step_order":  10,
+                            "lane":  "series_ingest",
+                            "step_order":  "10",
                             "parent_file_uploaded":  "4raw_ingest_trigger10.ps1",
                             "actual_file_hint":  "4raw_ingest_trigger.ps1",
                             "current_relative_path":  "triggers\\4raw_ingest_trigger.ps1",
                             "current_absolute_path":  "C:\\miratv_ingest\\triggers\\4raw_ingest_trigger.ps1",
                             "role":  "raw_ingest_trigger_general",
-                            "lane":  "series_ingest",
                             "execution_type":  "remote_trigger",
                             "purpose":  "Additional/general server-side ingest pass.",
-                            "subfiles":  [
-                                             {
-                                                 "sub_order":  1,
-                                                 "uploaded_file":  "ingest_series_files10.php",
-                                                 "actual_file_hint":  "ingest_series_files.php",
-                                                 "current_relative_path":  "_workers\\ingest_series_files.php",
-                                                 "current_absolute_path":  "server:/home/xpdgxfsp/public_html/miratv.club/_workers/ingest_series_files.php",
-                                                 "role":  "server_side_ingest_worker",
-                                                 "purpose":  "Server-side general ingest."
-                                             }
-                                         ],
+                            "subfile_count":  "1",
+                            "subfiles_uploaded":  "ingest_series_files10.php",
                             "clean_repo_target":  "server_worker_contract_review",
                             "migration_status":  "current_system_evidence",
                             "contract_gap":  "PHP logging/signal/kill-switch adapter needed if governed",
                             "secret_risk":  "token_risk"
                         },
                         {
-                            "step_order":  12,
-                            "parent_file_uploaded":  "95materialize_series_batch_runner2 12-2.ps1",
-                            "actual_file_hint":  "95materialize_series_batch_runner2.ps1",
-                            "current_relative_path":  "triggers\\95materialize_series_batch_runner2.ps1",
-                            "current_absolute_path":  "C:\\miratv_ingest\\triggers\\95materialize_series_batch_runner2.ps1",
-                            "role":  "series_materialization_runner",
-                            "lane":  "series_materialization",
-                            "execution_type":  "remote_materialization_runner",
-                            "purpose":  "Run/call remote series materialization endpoint and supporting query file.",
-                            "subfiles":  [
-                                             {
-                                                 "sub_order":  1,
-                                                 "uploaded_file":  "Query_Content2  12-1.ps1",
-                                                 "actual_file_hint":  "Query_Content2.ps1",
-                                                 "current_relative_path":  "workers\\Query_Content2.ps1",
-                                                 "current_absolute_path":  "C:\\miratv_ingest\\workers\\Query_Content2.ps1",
-                                                 "role":  "query_helper",
-                                                 "purpose":  "Query helper; Query_Content2 is the real base filename, not step 2."
-                                             },
-                                             {
-                                                 "sub_order":  2,
-                                                 "uploaded_file":  "95materialize_series_batch_runner2 12-2.ps1",
-                                                 "actual_file_hint":  "95materialize_series_batch_runner2.ps1",
-                                                 "current_relative_path":  "triggers\\95materialize_series_batch_runner2.ps1",
-                                                 "current_absolute_path":  "C:\\miratv_ingest\\triggers\\95materialize_series_batch_runner2.ps1",
-                                                 "role":  "remote_materialization_runner",
-                                                 "purpose":  "Call materialize_series2.php in batches."
-                                             }
-                                         ],
-                            "clean_repo_target":  "candidate_governed_worker_after_review",
-                            "migration_status":  "current_system_evidence",
-                            "contract_gap":  "needs contract alignment if moved into clean repo",
-                            "secret_risk":  "endpoint_or_token_risk"
-                        },
-                        {
-                            "step_order":  13,
+                            "lane":  "series_ingest",
+                            "step_order":  "13",
                             "parent_file_uploaded":  "08_finalize_series_trigger13.ps1",
                             "actual_file_hint":  "08_finalize_series_trigger.ps1",
                             "current_relative_path":  "triggers\\08_finalize_series_trigger.ps1",
                             "current_absolute_path":  "C:\\miratv_ingest\\triggers\\08_finalize_series_trigger.ps1",
                             "role":  "finalize_series_trigger",
-                            "lane":  "series_ingest",
                             "execution_type":  "remote_trigger",
                             "purpose":  "Call server-side finalize_series endpoint.",
-                            "subfiles":  [
-
-                                         ],
+                            "subfile_count":  "0",
+                            "subfiles_uploaded":  "",
                             "clean_repo_target":  "server_worker_contract_review",
                             "migration_status":  "current_system_evidence",
                             "contract_gap":  "PHP logging/signal/kill-switch adapter needed if governed",
                             "secret_risk":  "token_risk"
                         }
                     ],
+    "series_materialization_lane":  [
+                                        {
+                                            "lane":  "series_materialization",
+                                            "step_order":  "12",
+                                            "parent_file_uploaded":  "95materialize_series_batch_runner2 12-2.ps1",
+                                            "actual_file_hint":  "95materialize_series_batch_runner2.ps1",
+                                            "current_relative_path":  "triggers\\95materialize_series_batch_runner2.ps1",
+                                            "current_absolute_path":  "C:\\miratv_ingest\\triggers\\95materialize_series_batch_runner2.ps1",
+                                            "role":  "series_materialization_runner",
+                                            "execution_type":  "remote_materialization_runner",
+                                            "purpose":  "Run/call remote series materialization endpoint and supporting query file.",
+                                            "subfile_count":  "2",
+                                            "subfiles_uploaded":  "Query_Content2  12-1.ps1; 95materialize_series_batch_runner2 12-2.ps1",
+                                            "clean_repo_target":  "candidate_governed_worker_after_review",
+                                            "migration_status":  "current_system_evidence",
+                                            "contract_gap":  "needs contract alignment if moved into clean repo",
+                                            "secret_risk":  "endpoint_or_token_risk"
+                                        }
+                                    ],
     "epg_lane":  [
                      {
+                         "lane":  "epg_refresh",
                          "step_order":  "EPG-1",
                          "parent_file_uploaded":  "trigger to download epg-xml to c miratv_ingest-export step 1.ps1",
                          "actual_file_hint":  "download_epg_xml.ps1",
                          "current_relative_path":  "triggers\\download_epg_xml.ps1",
                          "current_absolute_path":  "C:\\miratv_ingest\\triggers\\download_epg_xml.ps1",
                          "role":  "epg_download_trigger",
-                         "lane":  "epg_refresh",
                          "execution_type":  "remote_download",
                          "purpose":  "Download provider XMLTV file to C:\\miratv_ingest\\export\\epg.xml.",
-                         "subfiles":  [
-
-                                      ],
+                         "subfile_count":  "0",
+                         "subfiles_uploaded":  "",
                          "clean_repo_target":  "rewrite_required_before_migration",
                          "migration_status":  "current_system_evidence",
                          "contract_gap":  "needs secret handling, logging, signal, bounded timeout",
                          "secret_risk":  "high_provider_credential_risk"
                      },
                      {
+                         "lane":  "epg_refresh",
                          "step_order":  "EPG-2",
                          "parent_file_uploaded":  "trigger to upload epg file to miratv- automated directory step 2.ps1",
                          "actual_file_hint":  "upload_epg_xml.ps1",
                          "current_relative_path":  "triggers\\upload_epg_xml.ps1",
                          "current_absolute_path":  "C:\\miratv_ingest\\triggers\\upload_epg_xml.ps1",
                          "role":  "epg_upload_trigger",
-                         "lane":  "epg_refresh",
                          "execution_type":  "ftp_upload",
                          "purpose":  "Upload C:\\miratv_ingest\\export\\epg.xml to miratv.club automated/incoming path.",
-                         "subfiles":  [
-
-                                      ],
+                         "subfile_count":  "0",
+                         "subfiles_uploaded":  "",
                          "clean_repo_target":  "rewrite_required_before_migration",
                          "migration_status":  "current_system_evidence",
                          "contract_gap":  "needs secret handling, logging, signal, bounded retry",
                          "secret_risk":  "high_ftp_credential_risk"
                      },
                      {
+                         "lane":  "epg_refresh",
                          "step_order":  "EPG-3",
                          "parent_file_uploaded":  "TriggerFile_EPGStep3.ps1",
                          "actual_file_hint":  "import_epg_trigger.ps1",
                          "current_relative_path":  "triggers\\import_epg_trigger.ps1",
                          "current_absolute_path":  "C:\\miratv_ingest\\triggers\\import_epg_trigger.ps1",
                          "role":  "epg_import_trigger",
-                         "lane":  "epg_refresh",
                          "execution_type":  "remote_import_loop",
                          "purpose":  "Call https://miratv.club/_ingest/import_epg.php in batches.",
-                         "subfiles":  [
-
-                                      ],
+                         "subfile_count":  "0",
+                         "subfiles_uploaded":  "",
                          "clean_repo_target":  "candidate_governed_worker_after_rewrite",
                          "migration_status":  "current_system_evidence",
                          "contract_gap":  "needs bounded loop, kill switch, logging, heartbeat/progress, signal",
                          "secret_risk":  "import_token_risk"
                      },
                      {
+                         "lane":  "epg_refresh",
                          "step_order":  "EPG-GOVERNED",
                          "parent_file_uploaded":  "run_epg_pipeline.ps1",
                          "actual_file_hint":  "run_epg_pipeline.ps1",
                          "current_relative_path":  "tools\\workers\\run_epg_pipeline.ps1",
                          "current_absolute_path":  "C:\\miraTV_ingest_clean\\tools\\workers\\run_epg_pipeline.ps1",
                          "role":  "epg_pipeline_runner",
-                         "lane":  "epg_refresh",
                          "execution_type":  "governed_orchestrator",
                          "purpose":  "Governed EPG acquisition, upload, and import pipeline.",
-                         "subfiles":  [
-                                          {
-                                              "sub_order":  "EPG-GOV-PULL",
-                                              "uploaded_file":  "pull_epg_xml.ps1",
-                                              "actual_file_hint":  "pull_epg_xml.ps1",
-                                              "current_relative_path":  "tools\\workers\\pull_epg_xml.ps1",
-                                              "current_absolute_path":  "C:\\miraTV_ingest_clean\\tools\\workers\\pull_epg_xml.ps1",
-                                              "role":  "epg_xml_pull_worker",
-                                              "purpose":  "Governed XMLTV pull worker."
-                                          },
-                                          {
-                                              "sub_order":  "EPG-GOV-UPLOAD",
-                                              "uploaded_file":  "upload_epg_xml_to_server.ps1",
-                                              "actual_file_hint":  "upload_epg_xml_to_server.ps1",
-                                              "current_relative_path":  "tools\\workers\\upload_epg_xml_to_server.ps1",
-                                              "current_absolute_path":  "C:\\miraTV_ingest_clean\\tools\\workers\\upload_epg_xml_to_server.ps1",
-                                              "role":  "epg_xml_upload_worker",
-                                              "purpose":  "Governed XMLTV FTP upload worker."
-                                          },
-                                          {
-                                              "sub_order":  "EPG-GOV-IMPORT",
-                                              "uploaded_file":  "run_epg_server_import_queue.ps1",
-                                              "actual_file_hint":  "run_epg_server_import_queue.ps1",
-                                              "current_relative_path":  "tools\\workers\\run_epg_server_import_queue.ps1",
-                                              "current_absolute_path":  "C:\\miraTV_ingest_clean\\tools\\workers\\run_epg_server_import_queue.ps1",
-                                              "role":  "epg_server_import_queue_worker",
-                                              "purpose":  "Governed server-side EPG import queue runner."
-                                          }
-                                      ],
+                         "subfile_count":  "3",
+                         "subfiles_uploaded":  "pull_epg_xml.ps1; upload_epg_xml_to_server.ps1; run_epg_server_import_queue.ps1",
                          "clean_repo_target":  "active",
                          "migration_status":  "current_system_evidence",
                          "contract_gap":  "contract_complete",
@@ -454,270 +271,97 @@
                  ],
     "provider_pull_spine":  [
                                 {
+                                    "lane":  "provider_pull_spine",
                                     "step_order":  "PULL-ROOT",
                                     "parent_file_uploaded":  "spine_master_import.bat",
                                     "actual_file_hint":  "spine_master_import.bat",
                                     "current_relative_path":  "workers\\spine\\spine_master_import.bat",
                                     "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\spine_master_import.bat",
                                     "role":  "provider_pull_spine_orchestrator",
-                                    "lane":  "provider_pull_spine",
                                     "execution_type":  "batch_orchestrator",
                                     "purpose":  "Legacy/current provider pull spine entry point for Live, VOD, Series, and EPG acquisition.",
-                                    "subfiles":  [
-                                                     {
-                                                         "sub_order":  "PULL-LIVE-CAT",
-                                                         "uploaded_file":  "pull_live_cat_trigger.bat",
-                                                         "actual_file_hint":  "pull_live_cat_trigger.bat",
-                                                         "current_relative_path":  "workers\\spine\\triggers\\pull_live_cat_trigger.bat",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\triggers\\pull_live_cat_trigger.bat",
-                                                         "role":  "provider_pull_trigger",
-                                                         "purpose":  "Trigger provider Live category pull."
-                                                     },
-                                                     {
-                                                         "sub_order":  "PULL-LIVE-STREAMS",
-                                                         "uploaded_file":  "pull_live_streams_trigger.bat",
-                                                         "actual_file_hint":  "pull_live_streams_trigger.bat",
-                                                         "current_relative_path":  "workers\\spine\\triggers\\pull_live_streams_trigger.bat",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\triggers\\pull_live_streams_trigger.bat",
-                                                         "role":  "provider_pull_trigger",
-                                                         "purpose":  "Trigger provider Live streams pull."
-                                                     },
-                                                     {
-                                                         "sub_order":  "PULL-VOD-CAT",
-                                                         "uploaded_file":  "pull_vod_cat_trigger.bat",
-                                                         "actual_file_hint":  "pull_vod_cat_trigger.bat",
-                                                         "current_relative_path":  "workers\\spine\\triggers\\pull_vod_cat_trigger.bat",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\triggers\\pull_vod_cat_trigger.bat",
-                                                         "role":  "provider_pull_trigger",
-                                                         "purpose":  "Trigger provider VOD category pull."
-                                                     },
-                                                     {
-                                                         "sub_order":  "PULL-VOD-STREAMS",
-                                                         "uploaded_file":  "pull_vod_streams_trigger.bat",
-                                                         "actual_file_hint":  "pull_vod_streams_trigger.bat",
-                                                         "current_relative_path":  "workers\\spine\\triggers\\pull_vod_streams_trigger.bat",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\triggers\\pull_vod_streams_trigger.bat",
-                                                         "role":  "provider_pull_trigger",
-                                                         "purpose":  "Trigger provider VOD streams pull."
-                                                     },
-                                                     {
-                                                         "sub_order":  "PULL-SERIES",
-                                                         "uploaded_file":  "pull_series_trigger.bat",
-                                                         "actual_file_hint":  "pull_series_trigger.bat",
-                                                         "current_relative_path":  "workers\\spine\\triggers\\pull_series_trigger.bat",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\triggers\\pull_series_trigger.bat",
-                                                         "role":  "provider_pull_trigger",
-                                                         "purpose":  "Trigger provider Series pull."
-                                                     },
-                                                     {
-                                                         "sub_order":  "PULL-SERIES-PS1",
-                                                         "uploaded_file":  "pull_series_trigger.ps1",
-                                                         "actual_file_hint":  "pull_series_trigger.ps1",
-                                                         "current_relative_path":  "workers\\spine\\triggers\\pull_series_trigger.ps1",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\triggers\\pull_series_trigger.ps1",
-                                                         "role":  "provider_pull_trigger",
-                                                         "purpose":  "PowerShell trigger/provider Series pull wrapper."
-                                                     },
-                                                     {
-                                                         "sub_order":  "PULL-EPG",
-                                                         "uploaded_file":  "pull_epg_trigger.bat",
-                                                         "actual_file_hint":  "pull_epg_trigger.bat",
-                                                         "current_relative_path":  "workers\\spine\\triggers\\pull_epg_trigger.bat",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\triggers\\pull_epg_trigger.bat",
-                                                         "role":  "provider_pull_trigger",
-                                                         "purpose":  "Trigger provider EPG/XMLTV pull."
-                                                     }
-                                                 ],
+                                    "subfile_count":  "7",
+                                    "subfiles_uploaded":  "pull_live_cat_trigger.bat; pull_live_streams_trigger.bat; pull_vod_cat_trigger.bat; pull_vod_streams_trigger.bat; pull_series_trigger.bat; pull_series_trigger.ps1; pull_epg_trigger.bat",
                                     "clean_repo_target":  "rebuild_as_governed_delta_spine",
                                     "migration_status":  "current_system_evidence",
                                     "contract_gap":  "needs governed orchestrator, per-media subcomponent logging, signal, kill switch, bounded execution",
                                     "secret_risk":  "provider_credential_or_domain_risk"
                                 },
                                 {
+                                    "lane":  "provider_pull_spine",
                                     "step_order":  "PULL-WORKERS",
                                     "parent_file_uploaded":  "pull_*_worker.ps1",
                                     "actual_file_hint":  "workers\\spine\\workers\\pull_*_worker.ps1",
                                     "current_relative_path":  "workers\\spine\\workers",
                                     "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\workers",
                                     "role":  "provider_pull_worker_group",
-                                    "lane":  "provider_pull_spine",
                                     "execution_type":  "worker_group",
                                     "purpose":  "Provider API pull workers that acquire Live/VOD/Series/EPG payloads into local raw/state folders.",
-                                    "subfiles":  [
-                                                     {
-                                                         "sub_order":  "LIVE-CAT-WORKER",
-                                                         "uploaded_file":  "pull_live_cat_worker.ps1",
-                                                         "actual_file_hint":  "pull_live_cat_worker.ps1",
-                                                         "current_relative_path":  "workers\\spine\\workers\\pull_live_cat_worker.ps1",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\workers\\pull_live_cat_worker.ps1",
-                                                         "role":  "provider_pull_worker",
-                                                         "purpose":  "Pull Live categories from provider."
-                                                     },
-                                                     {
-                                                         "sub_order":  "LIVE-STREAMS-WORKER",
-                                                         "uploaded_file":  "pull_live_streams_worker.ps1",
-                                                         "actual_file_hint":  "pull_live_streams_worker.ps1",
-                                                         "current_relative_path":  "workers\\spine\\workers\\pull_live_streams_worker.ps1",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\workers\\pull_live_streams_worker.ps1",
-                                                         "role":  "provider_pull_worker",
-                                                         "purpose":  "Pull Live streams from provider."
-                                                     },
-                                                     {
-                                                         "sub_order":  "VOD-CAT-WORKER",
-                                                         "uploaded_file":  "pull_vod_cat_worker.ps1",
-                                                         "actual_file_hint":  "pull_vod_cat_worker.ps1",
-                                                         "current_relative_path":  "workers\\spine\\workers\\pull_vod_cat_worker.ps1",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\workers\\pull_vod_cat_worker.ps1",
-                                                         "role":  "provider_pull_worker",
-                                                         "purpose":  "Pull VOD categories from provider."
-                                                     },
-                                                     {
-                                                         "sub_order":  "VOD-STREAMS-WORKER",
-                                                         "uploaded_file":  "pull_vod_streams_worker.ps1",
-                                                         "actual_file_hint":  "pull_vod_streams_worker.ps1",
-                                                         "current_relative_path":  "workers\\spine\\workers\\pull_vod_streams_worker.ps1",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\workers\\pull_vod_streams_worker.ps1",
-                                                         "role":  "provider_pull_worker",
-                                                         "purpose":  "Pull VOD streams from provider."
-                                                     },
-                                                     {
-                                                         "sub_order":  "SERIES-WORKER",
-                                                         "uploaded_file":  "pull_series_worker.ps1",
-                                                         "actual_file_hint":  "pull_series_worker.ps1",
-                                                         "current_relative_path":  "workers\\spine\\workers\\pull_series_worker.ps1",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\workers\\pull_series_worker.ps1",
-                                                         "role":  "provider_pull_worker",
-                                                         "purpose":  "Pull Series catalog from provider."
-                                                     },
-                                                     {
-                                                         "sub_order":  "EPG-WORKER",
-                                                         "uploaded_file":  "pull_epg_worker.ps1",
-                                                         "actual_file_hint":  "pull_epg_worker.ps1",
-                                                         "current_relative_path":  "workers\\spine\\workers\\pull_epg_worker.ps1",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\workers\\pull_epg_worker.ps1",
-                                                         "role":  "provider_pull_worker",
-                                                         "purpose":  "Pull provider EPG/XMLTV data."
-                                                     }
-                                                 ],
+                                    "subfile_count":  "6",
+                                    "subfiles_uploaded":  "pull_live_cat_worker.ps1; pull_live_streams_worker.ps1; pull_vod_cat_worker.ps1; pull_vod_streams_worker.ps1; pull_series_worker.ps1; pull_epg_worker.ps1",
                                     "clean_repo_target":  "rebuild_as_provider_snapshot_pull_workers",
                                     "migration_status":  "current_system_evidence",
                                     "contract_gap":  "needs governed worker contract and provider domain/secret abstraction",
                                     "secret_risk":  "provider_credential_or_domain_risk"
                                 },
                                 {
+                                    "lane":  "provider_pull_spine",
                                     "step_order":  "IMPORT-CALLS",
                                     "parent_file_uploaded":  "import_*.ps1",
                                     "actual_file_hint":  "workers\\spine\\call\\import_*.ps1",
                                     "current_relative_path":  "workers\\spine\\call",
                                     "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\call",
                                     "role":  "provider_payload_import_group",
-                                    "lane":  "provider_pull_spine",
                                     "execution_type":  "import_call_group",
                                     "purpose":  "Import locally acquired provider payloads into DB/server-side ingest endpoints.",
-                                    "subfiles":  [
-                                                     {
-                                                         "sub_order":  "IMPORT-LIVE-CAT",
-                                                         "uploaded_file":  "import_live_categories.ps1",
-                                                         "actual_file_hint":  "import_live_categories.ps1",
-                                                         "current_relative_path":  "workers\\spine\\call\\import_live_categories.ps1",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\call\\import_live_categories.ps1",
-                                                         "role":  "provider_payload_import",
-                                                         "purpose":  "Import Live categories."
-                                                     },
-                                                     {
-                                                         "sub_order":  "IMPORT-LIVE-CHANNELS",
-                                                         "uploaded_file":  "import_live_channels.ps1",
-                                                         "actual_file_hint":  "import_live_channels.ps1",
-                                                         "current_relative_path":  "workers\\spine\\call\\import_live_channels.ps1",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\call\\import_live_channels.ps1",
-                                                         "role":  "provider_payload_import",
-                                                         "purpose":  "Import Live channels/streams."
-                                                     },
-                                                     {
-                                                         "sub_order":  "IMPORT-VOD-CAT",
-                                                         "uploaded_file":  "import_vod_categories.ps1",
-                                                         "actual_file_hint":  "import_vod_categories.ps1",
-                                                         "current_relative_path":  "workers\\spine\\call\\import_vod_categories.ps1",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\call\\import_vod_categories.ps1",
-                                                         "role":  "provider_payload_import",
-                                                         "purpose":  "Import VOD categories."
-                                                     },
-                                                     {
-                                                         "sub_order":  "IMPORT-VOD-STREAMS",
-                                                         "uploaded_file":  "import_vod_streams.ps1",
-                                                         "actual_file_hint":  "import_vod_streams.ps1",
-                                                         "current_relative_path":  "workers\\spine\\call\\import_vod_streams.ps1",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\call\\import_vod_streams.ps1",
-                                                         "role":  "provider_payload_import",
-                                                         "purpose":  "Import VOD streams."
-                                                     },
-                                                     {
-                                                         "sub_order":  "IMPORT-SERIES",
-                                                         "uploaded_file":  "import_series_json.ps1",
-                                                         "actual_file_hint":  "import_series_json.ps1",
-                                                         "current_relative_path":  "workers\\spine\\call\\import_series_json.ps1",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\call\\import_series_json.ps1",
-                                                         "role":  "provider_payload_import",
-                                                         "purpose":  "Import Series JSON."
-                                                     },
-                                                     {
-                                                         "sub_order":  "IMPORT-EPG",
-                                                         "uploaded_file":  "import_epg.ps1",
-                                                         "actual_file_hint":  "import_epg.ps1",
-                                                         "current_relative_path":  "workers\\spine\\call\\import_epg.ps1",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\call\\import_epg.ps1",
-                                                         "role":  "provider_payload_import",
-                                                         "purpose":  "Import EPG."
-                                                     },
-                                                     {
-                                                         "sub_order":  "IMPORT-EPG-CHUNKED",
-                                                         "uploaded_file":  "import_epg_chunked.ps1",
-                                                         "actual_file_hint":  "import_epg_chunked.ps1",
-                                                         "current_relative_path":  "workers\\spine\\call\\import_epg_chunked.ps1",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\call\\import_epg_chunked.ps1",
-                                                         "role":  "provider_payload_import",
-                                                         "purpose":  "Import EPG in chunks."
-                                                     }
-                                                 ],
+                                    "subfile_count":  "7",
+                                    "subfiles_uploaded":  "import_live_categories.ps1; import_live_channels.ps1; import_vod_categories.ps1; import_vod_streams.ps1; import_series_json.ps1; import_epg.ps1; import_epg_chunked.ps1",
                                     "clean_repo_target":  "rebuild_as_delta_import_or_enqueue_workers",
                                     "migration_status":  "current_system_evidence",
                                     "contract_gap":  "needs governed import contract, dry-run planning, and bounded writes",
                                     "secret_risk":  "endpoint_or_import_token_risk"
                                 },
                                 {
+                                    "lane":  "provider_pull_spine",
                                     "step_order":  "PULL-STATE",
                                     "parent_file_uploaded":  "state markers",
                                     "actual_file_hint":  "workers\\spine\\state\\*.last",
                                     "current_relative_path":  "workers\\spine\\state",
                                     "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\state",
                                     "role":  "provider_pull_state_markers",
-                                    "lane":  "provider_pull_spine",
                                     "execution_type":  "state_marker_group",
                                     "purpose":  "Existing state marker files that indicate the old spine already tracked last pull state for at least Live and VOD streams.",
-                                    "subfiles":  [
-                                                     {
-                                                         "sub_order":  "STATE-LIVE",
-                                                         "uploaded_file":  "live_streams.last",
-                                                         "actual_file_hint":  "live_streams.last",
-                                                         "current_relative_path":  "workers\\spine\\state\\live_streams.last",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\state\\live_streams.last",
-                                                         "role":  "state_marker",
-                                                         "purpose":  "Live streams last-state marker."
-                                                     },
-                                                     {
-                                                         "sub_order":  "STATE-VOD",
-                                                         "uploaded_file":  "vod_streams.last",
-                                                         "actual_file_hint":  "vod_streams.last",
-                                                         "current_relative_path":  "workers\\spine\\state\\vod_streams.last",
-                                                         "current_absolute_path":  "C:\\miratv_ingest\\workers\\spine\\state\\vod_streams.last",
-                                                         "role":  "state_marker",
-                                                         "purpose":  "VOD streams last-state marker."
-                                                     }
-                                                 ],
+                                    "subfile_count":  "2",
+                                    "subfiles_uploaded":  "live_streams.last; vod_streams.last",
                                     "clean_repo_target":  "replace_with_provider_inventory_snapshot_state",
                                     "migration_status":  "current_system_evidence",
                                     "contract_gap":  "state markers should be replaced by structured snapshot/delta records",
                                     "secret_risk":  "low"
                                 }
-                            ]
+                            ],
+    "home_media_cache_lane":  [
+                                  {
+                                      "lane":  "home_media_cache",
+                                      "step_order":  "DAILY-4AM-EASTERN",
+                                      "parent_file_uploaded":  "refresh_home_media_shelf_cache.ps1",
+                                      "actual_file_hint":  "refresh_home_media_shelf_cache.ps1",
+                                      "current_relative_path":  "tools\\workers\\refresh_home_media_shelf_cache.ps1",
+                                      "current_absolute_path":  "C:\\miraTV_ingest_clean\\tools\\workers\\refresh_home_media_shelf_cache.ps1",
+                                      "role":  "home_media_shelf_cache_refresh",
+                                      "execution_type":  "governed_scheduled_worker",
+                                      "purpose":  "Daily prebuild of Home Movies/Series shelf cache so Android Home does not build expensive preview shelves live.",
+                                      "subfile_count":  "0",
+                                      "subfiles_uploaded":  "",
+                                      "clean_repo_target":  "active",
+                                      "migration_status":  "current_system_evidence",
+                                      "contract_gap":  "contract_complete",
+                                      "secret_risk":  "low",
+                                      "cadence":  "daily_4am_eastern",
+                                      "expected_signal":  "home_media_shelf_cache_refresh_completed",
+                                      "required_kill_switch":  "ENABLE_HOME_MEDIA_SHELF_CACHE_REFRESH",
+                                      "report_root":  "runtime\\reports\\home_media_shelf_cache",
+                                      "provider_calls_expected":  false,
+                                      "db_writes_expected":  true
+                                  }
+                              ]
 }
